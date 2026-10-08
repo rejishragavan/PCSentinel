@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Windows;
+using System.Windows.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using PCSentinel.Analysis;
@@ -13,10 +14,19 @@ namespace PCSentinel.App.ViewModels;
 public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
 {
     private readonly ITelemetryStore _store;
-    private readonly IHealthAnalyzer _analyzer;
+    private readonly MultiSignalCorrelationEngine _correlationEngine;
+    private readonly WorkloadClassifier _classifier;
+    private readonly StatisticalBaselineLearner _baselineLearner;
+    private readonly UsbSerialSentinelNode _sentinelNode;
+
     private SensorCollector? _collector;
     private ISensorProvider? _provider;
-    private WorkloadBaseline? _baseline;
+    private WorkloadBaseline? _activeBaseline;
+    private SimulationProfile _currentSimProfile = SimulationProfile.GamingHeavy;
+
+    private readonly List<double> _cpuTempHistory = new();
+    private readonly List<double> _gpuTempHistory = new();
+    private const int MaxHistoryPoints = 30;
 
     [ObservableProperty] private double _cpuTemp;
     [ObservableProperty] private double _cpuClock;
@@ -38,30 +48,44 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
     [ObservableProperty] private string _healthColor = "#10B981"; // Emerald green
     [ObservableProperty] private bool _isSimulating;
 
+    [ObservableProperty] private string _workloadName = "Gaming";
+    [ObservableProperty] private string _workloadDescription = "High 3D Graphics Load";
+    [ObservableProperty] private string _baselineComparisonText = "Normal GPU: 68–74°C @ 1845 MHz";
+    [ObservableProperty] private string _sentinelNodeStatus = "Node: Virtual Loopback (Active)";
+
+    [ObservableProperty] private PointCollection _cpuSparkline = new();
+    [ObservableProperty] private PointCollection _gpuSparkline = new();
+
     public ObservableCollection<HealthEvent> ActiveEvents { get; } = new();
     public ObservableCollection<ScoreDeduction> Deductions { get; } = new();
 
     public DashboardViewModel()
     {
         _store = new SqliteTelemetryStore();
-        _analyzer = new RuleBasedHealthAnalyzer();
+        _classifier = new WorkloadClassifier();
+        _baselineLearner = new StatisticalBaselineLearner();
+        _correlationEngine = new MultiSignalCorrelationEngine(_classifier);
+        _sentinelNode = new UsbSerialSentinelNode();
     }
 
     public async Task InitializeAsync()
     {
         await _store.InitializeDatabaseAsync();
+        await _sentinelNode.ConnectAsync("VIRTUAL");
 
-        _baseline = new WorkloadBaseline
+        _activeBaseline = new WorkloadBaseline
         {
-            ProfileName = "Default Gaming",
+            ProfileName = "Learned Gaming Profile",
             Workload = WorkloadType.Gaming,
-            AvgCpuTempC = 65.0,
+            AvgCpuTempC = 64.0,
+            StdDevCpuTempC = 3.0,
             AvgCpuClockMhz = 4700.0,
-            AvgGpuTempC = 72.0,
-            AvgGpuClockMhz = 1845.0
+            AvgGpuTempC = 71.0,
+            StdDevGpuTempC = 2.5,
+            AvgGpuClockMhz = 1845.0,
+            SampleCount = 1000
         };
 
-        // If running on Windows with admin, attempt real hardware. Otherwise fall back to simulator.
         if (OperatingSystem.IsWindows())
         {
             try
@@ -71,13 +95,13 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
             }
             catch
             {
-                _provider = new SimulatedSensorProvider(SimulationProfile.GamingHeavy);
+                _provider = new SimulatedSensorProvider(_currentSimProfile);
                 IsSimulating = true;
             }
         }
         else
         {
-            _provider = new SimulatedSensorProvider(SimulationProfile.GamingHeavy);
+            _provider = new SimulatedSensorProvider(_currentSimProfile);
             IsSimulating = true;
         }
 
@@ -88,23 +112,53 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
     }
 
     [RelayCommand]
-    public void ToggleSimulationMode()
+    public void CycleSimulationProfile()
     {
         if (_provider is SimulatedSensorProvider sim)
         {
-            // Cycle simulation profiles
-            sim.SetProfile(SimulationProfile.ThermalThrottlingIncident);
+            _currentSimProfile = _currentSimProfile switch
+            {
+                SimulationProfile.NormalIdle => SimulationProfile.GamingHeavy,
+                SimulationProfile.GamingHeavy => SimulationProfile.ThermalThrottlingIncident,
+                _ => SimulationProfile.NormalIdle
+            };
+
+            sim.SetProfile(_currentSimProfile);
         }
     }
 
     private void OnSampleCollected(object? sender, TelemetrySample sample)
     {
-        var analysis = _analyzer.Analyze(sample, _baseline);
+        // 1. Workload Classification
+        var classification = _classifier.Classify(sample);
 
-        // Store asynchronously in background
+        // 2. Baseline Learning
+        _baselineLearner.IngestSample(sample, classification.Workload);
+        var baseline = _baselineLearner.GetBaseline(classification.Workload) ??
+                       (classification.Workload == WorkloadType.Gaming ? _activeBaseline : null);
+
+        // 3. Multi-Signal Diagnostic Analysis
+        var analysis = _correlationEngine.Analyze(sample, baseline);
+
+        // 4. Persistence
         _ = _store.StoreTelemetrySampleAsync(sample);
         _ = _store.StoreHealthScoreAsync(analysis.Score);
 
+        // 5. Sentinel Node Packet Transmission
+        _ = _sentinelNode.SendTelemetryAsync(new SentinelPacket
+        {
+            Type = "status",
+            Score = analysis.Score.OverallScore,
+            CpuTemp = sample.CpuTemperatureC ?? 0,
+            GpuTemp = sample.GpuTemperatureC ?? 0,
+            CpuLoad = sample.CpuLoadPercent ?? 0,
+            GpuLoad = sample.GpuLoadPercent ?? 0,
+            Workload = classification.Workload.ToString(),
+            LedColor = analysis.Score.OverallScore >= 90 ? "GREEN" : analysis.Score.OverallScore >= 75 ? "YELLOW" : "RED",
+            TriggerBuzzer = analysis.DetectedEvents.Any(e => e.Severity == EventSeverity.Critical)
+        });
+
+        // 6. UI Update
         Application.Current?.Dispatcher.Invoke(() =>
         {
             CpuTemp = sample.CpuTemperatureC ?? 0;
@@ -122,9 +176,19 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
             RamUsedGb = sample.RamUsedGb ?? 0;
             RamLoad = sample.RamLoadPercent ?? 0;
 
+            WorkloadName = classification.Workload.ToString();
+            WorkloadDescription = classification.Description;
+
+            if (baseline != null)
+            {
+                BaselineComparisonText = $"Normal {baseline.Workload}: {baseline.AvgGpuTempC:F0}±{baseline.StdDevGpuTempC:F0}°C @ {baseline.AvgGpuClockMhz:F0}MHz";
+            }
+
             HealthScore = analysis.Score.OverallScore;
             HealthColor = HealthScore >= 90 ? "#10B981" : HealthScore >= 75 ? "#F59E0B" : "#EF4444";
-            HealthSummary = HealthScore >= 90 ? "System Healthy" : HealthScore >= 75 ? "Warning - Degradation" : "Critical Anomaly Detected";
+            HealthSummary = HealthScore >= 90 ? "System Healthy" : HealthScore >= 75 ? "Warning - Deviation" : "Critical Throttle/Anomaly";
+
+            UpdateSparklines(CpuTemp, GpuTemp);
 
             ActiveEvents.Clear();
             foreach (var ev in analysis.DetectedEvents)
@@ -140,6 +204,37 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
         });
     }
 
+    private void UpdateSparklines(double cpu, double gpu)
+    {
+        _cpuTempHistory.Add(cpu);
+        if (_cpuTempHistory.Count > MaxHistoryPoints) _cpuTempHistory.RemoveAt(0);
+
+        _gpuTempHistory.Add(gpu);
+        if (_gpuTempHistory.Count > MaxHistoryPoints) _gpuTempHistory.RemoveAt(0);
+
+        CpuSparkline = GenerateSparklinePoints(_cpuTempHistory, 30.0, 100.0, 240, 50);
+        GpuSparkline = GenerateSparklinePoints(_gpuTempHistory, 30.0, 100.0, 240, 50);
+    }
+
+    private static PointCollection GenerateSparklinePoints(List<double> values, double minVal, double maxVal, double width, double height)
+    {
+        var points = new PointCollection();
+        if (values.Count < 2) return points;
+
+        double stepX = width / (MaxHistoryPoints - 1);
+        double range = Math.Max(1.0, maxVal - minVal);
+
+        for (int i = 0; i < values.Count; i++)
+        {
+            double x = i * stepX;
+            double norm = Math.Clamp((values[i] - minVal) / range, 0.0, 1.0);
+            double y = height - (norm * height);
+            points.Add(new Point(x, y));
+        }
+
+        return points;
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_collector != null)
@@ -147,6 +242,7 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
             await _collector.StopAsync();
             _collector.Dispose();
         }
+        await _sentinelNode.DisconnectAsync();
         await _store.DisposeAsync();
     }
 }

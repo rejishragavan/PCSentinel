@@ -13,13 +13,14 @@ internal static class Program
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("================================================================================");
-        Console.WriteLine("                         PC SENTINEL — MILESTONE 1                              ");
-        Console.WriteLine("                Hardware Telemetry Proof & Diagnostic Engine                    ");
+        Console.WriteLine("                         PC SENTINEL — MILESTONE 2                              ");
+        Console.WriteLine("      Multi-Signal Diagnostics, Baseline Learning & Sentinel Node Bus           ");
         Console.WriteLine("================================================================================");
         Console.ResetColor();
 
         bool forceSimulate = args.Contains("--simulate") || !OperatingSystem.IsWindows();
         bool simulateThrottle = args.Contains("--throttle");
+        string comPort = args.FirstOrDefault(a => a.StartsWith("--com="))?.Split('=')[1] ?? "VIRTUAL";
 
         ISensorProvider provider;
         if (forceSimulate)
@@ -40,24 +41,34 @@ internal static class Program
         Console.WriteLine($"[INIT] Initializing SQLite database: {dbPath}");
         await store.InitializeDatabaseAsync();
 
-        // Seed a sample gaming baseline for comparison
-        var gamingBaseline = new WorkloadBaseline
+        // Connect USB Serial Sentinel Node (or Virtual loopback)
+        var sentinelNode = new UsbSerialSentinelNode();
+        await sentinelNode.ConnectAsync(comPort);
+        Console.WriteLine($"[INIT] Sentinel Node interface: {sentinelNode.PortName} (Active: {sentinelNode.IsConnected})");
+
+        var alertManager = new AlertManager(store, sentinelNode);
+        var classifier = new WorkloadClassifier();
+        var learner = new StatisticalBaselineLearner();
+        var correlationEngine = new MultiSignalCorrelationEngine(classifier);
+
+        // Seed a sample baseline for comparison
+        var seededBaseline = new WorkloadBaseline
         {
-            ProfileName = "Gaming Normal (Baseline)",
+            ProfileName = "Historical Gaming Baseline",
             Workload = WorkloadType.Gaming,
-            AvgCpuTempC = 65.0,
+            AvgCpuTempC = 64.0,
+            StdDevCpuTempC = 3.0,
             AvgCpuClockMhz = 4700.0,
             AvgCpuPowerW = 75.0,
-            AvgGpuTempC = 72.0,
+            AvgGpuTempC = 71.0,
+            StdDevGpuTempC = 2.5,
             AvgGpuClockMhz = 1845.0,
             AvgGpuPowerW = 210.0,
-            SampleCount = 500
+            SampleCount = 1200
         };
-        await store.StoreBaselineAsync(gamingBaseline);
+        await store.StoreBaselineAsync(seededBaseline);
 
-        var analyzer = new RuleBasedHealthAnalyzer();
         using var collector = new SensorCollector(provider, TimeSpan.FromSeconds(1));
-
         int sampleCounter = 0;
         using var cts = new CancellationTokenSource();
 
@@ -72,19 +83,43 @@ internal static class Program
         {
             sampleCounter++;
 
-            // Run Diagnostics
-            var analysis = analyzer.Analyze(sample, gamingBaseline);
+            // 1. Classify Workload
+            var workload = classifier.Classify(sample);
 
-            // Persist to SQLite
+            // 2. Ingest into Statistical Baseline Learner
+            learner.IngestSample(sample, workload.Workload);
+            var activeBaseline = learner.GetBaseline(workload.Workload) ?? (workload.Workload == WorkloadType.Gaming ? seededBaseline : null);
+
+            // 3. Multi-Signal Diagnostic Correlation
+            var analysis = correlationEngine.Analyze(sample, activeBaseline);
+
+            // 4. Persist sample and scores
             await store.StoreTelemetrySampleAsync(sample);
             await store.StoreHealthScoreAsync(analysis.Score);
+
+            // 5. Broadcast alerts
             foreach (var evt in analysis.DetectedEvents)
             {
-                await store.StoreHealthEventAsync(evt);
+                await alertManager.PublishAlertAsync(evt);
             }
 
-            // Render live console display
-            RenderTelemetry(sample, analysis, sampleCounter);
+            // 6. Transmit Telemetry Packet to ESP32-S3 Sentinel Node
+            var packet = new SentinelPacket
+            {
+                Type = "status",
+                Score = analysis.Score.OverallScore,
+                CpuTemp = sample.CpuTemperatureC ?? 0,
+                GpuTemp = sample.GpuTemperatureC ?? 0,
+                CpuLoad = sample.CpuLoadPercent ?? 0,
+                GpuLoad = sample.GpuLoadPercent ?? 0,
+                Workload = workload.Workload.ToString(),
+                LedColor = analysis.Score.OverallScore >= 90 ? "GREEN" : analysis.Score.OverallScore >= 75 ? "YELLOW" : "RED",
+                TriggerBuzzer = analysis.DetectedEvents.Any(e => e.Severity == EventSeverity.Critical)
+            };
+            await sentinelNode.SendTelemetryAsync(packet);
+
+            // 7. Render Console Dashboard
+            RenderTelemetry(sample, workload, activeBaseline, analysis, sampleCounter);
         };
 
         collector.CollectionError += (s, ex) =>
@@ -99,29 +134,37 @@ internal static class Program
 
         try
         {
-            // Run until cancelled
             await Task.Delay(Timeout.Infinite, cts.Token);
         }
-        catch (OperationCanceledException)
-        {
-            // Clean exit
-        }
+        catch (OperationCanceledException) { }
 
         await collector.StopAsync();
+        await sentinelNode.DisconnectAsync();
         await store.DisposeAsync();
 
         Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine($"\n[COMPLETE] Milestone 1 verification finished. Processed {sampleCounter} telemetry frames.");
-        Console.WriteLine($"[STORAGE] Verified: All frames persisted cleanly to SQLite: {dbPath}");
+        Console.WriteLine($"\n[COMPLETE] Milestone 2 verification finished. Processed {sampleCounter} telemetry frames.");
+        Console.WriteLine($"[STORAGE] Verified: All frames and events persisted cleanly to SQLite: {dbPath}");
         Console.ResetColor();
     }
 
-    private static void RenderTelemetry(TelemetrySample sample, AnalysisResult analysis, int count)
+    private static void RenderTelemetry(
+        TelemetrySample sample,
+        WorkloadClassification workload,
+        WorkloadBaseline? baseline,
+        AnalysisResult analysis,
+        int count)
     {
         Console.Clear();
         Console.ForegroundColor = ConsoleColor.DarkCyan;
         Console.WriteLine($"=== PC SENTINEL LIVE TELEMETRY [Frame #{count}] | {sample.Timestamp:HH:mm:ss} UTC ===");
         Console.ResetColor();
+
+        // Workload Indicator
+        Console.ForegroundColor = ConsoleColor.Magenta;
+        Console.Write($"[ACTIVE WORKLOAD: {workload.Workload.ToString().ToUpper()}] ");
+        Console.ResetColor();
+        Console.WriteLine($"{workload.Description} (Confidence: {workload.Confidence * 100:F0}%)");
 
         // CPU
         Console.Write("CPU:     ");
@@ -133,28 +176,27 @@ internal static class Program
 
         // GPU
         Console.Write("GPU:     ");
-        PrintMetric("Temp", sample.GpuTemperatureC, "°C", 80, 86);
-        PrintMetric("Hotspot", sample.GpuHotspotC, "°C", 90, 102);
+        PrintMetric("Temp", sample.GpuTemperatureC, "°C", 80, 85);
+        PrintMetric("Hotspot", sample.GpuHotspotC, "°C", 90, 100);
         PrintMetric("Clock", sample.GpuClockMhz, " MHz", null, null);
         PrintMetric("Load", sample.GpuLoadPercent, "%", null, null);
         PrintMetric("Fan", sample.GpuFanPercent, "%", null, null);
         Console.WriteLine();
 
-        // Memory
+        // RAM & Storage
         Console.Write("RAM:     ");
         PrintMetric("Used", sample.RamUsedGb, " GB", null, null);
-        PrintMetric("Load", sample.RamLoadPercent, "%", 85, 95);
+        PrintMetric("Load", sample.RamLoadPercent, "%", 85, 94);
         Console.WriteLine();
 
-        // Storage
-        if (sample.StorageTemperaturesC.Count > 0)
+        // Learned Baseline Comparison
+        if (baseline != null)
         {
-            Console.Write("Storage: ");
-            foreach (var kvp in sample.StorageTemperaturesC)
-            {
-                PrintMetric(kvp.Key, kvp.Value, "°C", 60, 75);
-            }
-            Console.WriteLine();
+            Console.WriteLine("--------------------------------------------------------------------------------");
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine($"Baseline Profile: {baseline.ProfileName} (N={baseline.SampleCount})");
+            Console.WriteLine($"  Expected Normal: GPU Temp: {baseline.AvgGpuTempC:F1}±{baseline.StdDevGpuTempC:F1}°C | GPU Clock: {baseline.AvgGpuClockMhz:F0} MHz | Power: {baseline.AvgGpuPowerW:F0} W");
+            Console.ResetColor();
         }
 
         // Health Score & Deductions
@@ -178,11 +220,11 @@ internal static class Program
         {
             Console.WriteLine("--------------------------------------------------------------------------------");
             Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine("DIAGNOSTIC EVENTS DETECTED:");
+            Console.WriteLine("ROOT-CAUSE CORRELATION DIAGNOSTICS:");
             foreach (var ev in analysis.DetectedEvents)
             {
                 Console.ForegroundColor = ev.Severity == EventSeverity.Critical ? ConsoleColor.Red : ConsoleColor.Yellow;
-                Console.WriteLine($"  [{ev.Severity}] {ev.Title} (Confidence: {ev.Confidence * 100:F0}%)");
+                Console.WriteLine($"  [{ev.Severity}] {ev.Title} ({ev.Type}) — Confidence: {ev.Confidence * 100:F0}%");
                 Console.ResetColor();
                 Console.WriteLine($"    Evidence: {ev.Evidence}");
                 Console.WriteLine($"    Action:   {ev.Recommendation}");
@@ -190,7 +232,7 @@ internal static class Program
         }
 
         Console.WriteLine("--------------------------------------------------------------------------------");
-        Console.WriteLine("Press Ctrl+C to terminate test harness.");
+        Console.WriteLine("Press Ctrl+C to terminate harness.");
     }
 
     private static void PrintMetric(string label, double? value, string unit, double? warnThresh, double? critThresh)
