@@ -170,6 +170,20 @@ public sealed class SqliteTelemetryStore : ITelemetryStore
             );
 
             CREATE INDEX IF NOT EXISTS IX_OCExperiments_Timestamp ON OCExperiments (Timestamp DESC);
+
+            CREATE TABLE IF NOT EXISTS RecoveryAudits (
+                Id TEXT PRIMARY KEY,
+                Action TEXT NOT NULL,
+                CommandExecuted TEXT NOT NULL,
+                IsSuccessful INTEGER NOT NULL,
+                ExitCode INTEGER NOT NULL,
+                Summary TEXT NOT NULL,
+                OutputLog TEXT NOT NULL,
+                DurationMs REAL NOT NULL,
+                ExecutedAt TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_RecoveryAudits_ExecutedAt ON RecoveryAudits (ExecutedAt DESC);
         ";
 
         await using var cmd = conn.CreateCommand();
@@ -702,6 +716,67 @@ public sealed class SqliteTelemetryStore : ITelemetryStore
                 PerformanceGainPercent = reader.GetDouble(9),
                 MaxTempReachedC = reader.GetDouble(10),
                 Notes = reader.IsDBNull(11) ? string.Empty : reader.GetString(11)
+            });
+        }
+
+        return list;
+    }
+
+    public async Task StoreRecoveryAuditAsync(RecoveryTaskResult task, CancellationToken cancellationToken = default)
+    {
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(cancellationToken);
+
+        const string sql = @"
+            INSERT INTO RecoveryAudits (
+                Id, Action, CommandExecuted, IsSuccessful, ExitCode,
+                Summary, OutputLog, DurationMs, ExecutedAt
+            ) VALUES (
+                @Id, @Action, @CommandExecuted, @IsSuccessful, @ExitCode,
+                @Summary, @OutputLog, @DurationMs, @ExecutedAt
+            );
+        ";
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.Parameters.AddWithValue("@Id", task.TaskId);
+        cmd.Parameters.AddWithValue("@Action", task.Action.ToString());
+        cmd.Parameters.AddWithValue("@CommandExecuted", task.CommandExecuted);
+        cmd.Parameters.AddWithValue("@IsSuccessful", task.IsSuccessful ? 1 : 0);
+        cmd.Parameters.AddWithValue("@ExitCode", task.ExitCode);
+        cmd.Parameters.AddWithValue("@Summary", task.Summary);
+        cmd.Parameters.AddWithValue("@OutputLog", task.OutputLog);
+        cmd.Parameters.AddWithValue("@DurationMs", task.DurationMs);
+        cmd.Parameters.AddWithValue("@ExecutedAt", task.ExecutedAt.ToString("O"));
+
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<RecoveryTaskResult>> GetRecoveryAuditsAsync(int count, CancellationToken cancellationToken = default)
+    {
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(cancellationToken);
+
+        const string sql = "SELECT * FROM RecoveryAudits ORDER BY ExecutedAt DESC LIMIT @Count;";
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.Parameters.AddWithValue("@Count", count);
+
+        var list = new List<RecoveryTaskResult>();
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            list.Add(new RecoveryTaskResult
+            {
+                TaskId = reader.GetString(0),
+                Action = Enum.TryParse<RecoveryActionType>(reader.GetString(1), out var act) ? act : RecoveryActionType.None,
+                CommandExecuted = reader.GetString(2),
+                IsSuccessful = reader.GetInt32(3) == 1,
+                ExitCode = reader.GetInt32(4),
+                Summary = reader.GetString(5),
+                OutputLog = reader.GetString(6),
+                DurationMs = reader.GetDouble(7),
+                ExecutedAt = DateTime.Parse(reader.GetString(8))
             });
         }
 

@@ -78,6 +78,10 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
     private readonly IncidentRecorder _incidentRecorder;
     private readonly OcAnalyzer _ocAnalyzer;
     private readonly StorageAnalyzer _storageAnalyzer;
+    private readonly RecoveryManager _recoveryManager;
+
+    [ObservableProperty] private string _recoveryStatusText = "Recovery Engine: Nominal (0 pending repairs)";
+    public ObservableCollection<RecoveryTaskResult> RecoveryTasks { get; } = new();
 
     public DashboardViewModel()
     {
@@ -92,6 +96,7 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
         _incidentRecorder = new IncidentRecorder(_store, _driverInspector);
         _ocAnalyzer = new OcAnalyzer(_store);
         _storageAnalyzer = new StorageAnalyzer();
+        _recoveryManager = new RecoveryManager(_store, _driverInspector, _bootAnalyzer, simulateProblems: false);
     }
 
     public async Task InitializeAsync()
@@ -161,6 +166,17 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
             {
                 var latest = Experiments[0];
                 LatestOcExperimentText = $"Exp #{latest.ExperimentNumber}: +{latest.GpuClockOffsetMhz:F0}MHz -> +{latest.PerformanceGainPercent:F1}% FPS";
+            }
+
+            var recoveryAudits = await _store.GetRecoveryAuditsAsync(10);
+            RecoveryTasks.Clear();
+            foreach (var task in recoveryAudits)
+            {
+                RecoveryTasks.Add(task);
+            }
+            if (RecoveryTasks.Count > 0)
+            {
+                RecoveryStatusText = $"Recovery Engine: {RecoveryTasks.Count} audits logged in history.";
             }
         }
         catch { }
@@ -273,6 +289,32 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
 
         RecentIncidents.Insert(0, inc);
         IncidentCountText = $"Black Box: {RecentIncidents.Count} Captured";
+    }
+
+    [RelayCommand]
+    public async Task RunAutonomousRecoveryOrchestrator()
+    {
+        RecoveryStatusText = "Orchestrating Autonomous Recovery (SFC, DISM, ChkDisk, Drivers)...";
+        var plan = await _recoveryManager.OrchestrateFullRecoveryPlanAsync(dryRun: true);
+        RecoveryTasks.Clear();
+        foreach (var task in plan.ExecutedTasks)
+        {
+            RecoveryTasks.Add(task);
+        }
+
+        RecoveryStatusText = plan.ResolutionSummary;
+
+        // If system was simulated throttling, restore it to normal gaming profile
+        if (_provider is SimulatedSensorProvider sim)
+        {
+            _currentSimProfile = SimulationProfile.GamingHeavy;
+            sim.SetProfile(_currentSimProfile);
+            ProviderModeText = $"SIMULATED ({_currentSimProfile})";
+        }
+
+        HealthScore = plan.PostRecoveryHealthScore;
+        HealthColor = "#10B981";
+        HealthSummary = "Remediated & Healthy";
     }
 
     private void OnSampleCollected(object? sender, TelemetrySample sample)

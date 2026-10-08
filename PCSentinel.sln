@@ -18,6 +18,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "PCSentinel.App", "src\PCSen
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "PCSentinel.Core.Tests", "tests\PCSentinel.Core.Tests\PCSentinel.Core.Tests.csproj", "{9C08D64A-A91B-4595-A708-3EF0C37936E7}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "PCSentinel.Service", "src\PCSentinel.Service\PCSentinel.Service.csproj", "{5F719E88-A281-4C55-9B2F-93430A8D25A8}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -56,6 +58,10 @@ Global
 		{9C08D64A-A91B-4595-A708-3EF0C37936E7}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9C08D64A-A91B-4595-A708-3EF0C37936E7}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{9C08D64A-A91B-4595-A708-3EF0C37936E7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5F719E88-A281-4C55-9B2F-93430A8D25A8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5F719E88-A281-4C55-9B2F-93430A8D25A8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5F719E88-A281-4C55-9B2F-93430A8D25A8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5F719E88-A281-4C55-9B2F-93430A8D25A8}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

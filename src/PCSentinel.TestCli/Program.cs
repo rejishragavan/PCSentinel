@@ -24,6 +24,7 @@ internal static class Program
         bool simulateBootRegression = args.Contains("--boot-regression");
         bool triggerTestIncident = args.Contains("--trigger-incident");
         bool runOcDemo = args.Contains("--oc-lab") || args.Contains("--auto-oc");
+        bool runRecoveryDemo = args.Contains("--recovery") || args.Contains("--auto-repair");
         string comPort = args.FirstOrDefault(a => a.StartsWith("--com="))?.Split('=')[1] ?? "VIRTUAL";
 
         ISensorProvider provider;
@@ -137,7 +138,46 @@ internal static class Program
             Console.WriteLine("================================================================================\n");
         }
 
-        // 6. USB Sentinel Node & Core Bus
+        // 6. Recovery Subsystem (Phase 19)
+        var recoveryManager = new RecoveryManager(store, driverInspector, bootAnalyzer, simulateProblems: args.Contains("--simulate-corruption") || runRecoveryDemo);
+        if (runRecoveryDemo)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("\n================================================================================");
+            Console.WriteLine("              RECOVERY MANAGER — AUTONOMOUS SYSTEM REPAIR RUNNER                ");
+            Console.WriteLine("================================================================================");
+            Console.ResetColor();
+
+            Console.WriteLine("[1] Assessing System Integrity & Failure States...");
+            var assessment = await recoveryManager.AssessSystemRecoveryStateAsync();
+            Console.ForegroundColor = assessment.SystemRequiresRecovery ? ConsoleColor.Red : ConsoleColor.Green;
+            Console.WriteLine($"    Recovery Status: {(assessment.SystemRequiresRecovery ? "RECOVERY REQUIRED" : "NOMINAL")}");
+            Console.ResetColor();
+            Console.WriteLine($"    Root Cause:      {assessment.PrimaryRootCause}");
+            foreach (var issue in assessment.DetectedIssues)
+            {
+                Console.WriteLine($"    • [{issue.Severity}] {issue.IssueCode}: {issue.Description}");
+                Console.WriteLine($"      Action: {issue.SuggestedAction} | Evidence: {issue.TechnicalEvidence}");
+            }
+
+            Console.WriteLine("\n[2] Orchestrating Autonomous Remediation Plan...");
+            var plan = await recoveryManager.OrchestrateFullRecoveryPlanAsync(dryRun: true);
+            foreach (var task in plan.ExecutedTasks)
+            {
+                Console.ForegroundColor = task.IsSuccessful ? ConsoleColor.Green : ConsoleColor.Red;
+                Console.WriteLine($"    ✓ Task '{task.Action}': {task.Summary} ({task.DurationMs:F0}ms)");
+                Console.ResetColor();
+            }
+
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine($"\n[3] Resolution: {plan.ResolutionSummary}");
+            Console.WriteLine($"    Restored Health Score: {plan.PostRecoveryHealthScore}/100");
+            Console.WriteLine("    Status: Persisted all repair execution audits to SQLite RecoveryAudits table.");
+            Console.ResetColor();
+            Console.WriteLine("================================================================================\n");
+        }
+
+        // 7. USB Sentinel Node & Core Bus
         var sentinelNode = new UsbSerialSentinelNode();
         await sentinelNode.ConnectAsync(comPort);
         Console.WriteLine($"[INIT] Sentinel Node interface: {sentinelNode.PortName} (Active: {sentinelNode.IsConnected})");

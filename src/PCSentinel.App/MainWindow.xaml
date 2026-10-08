@@ -88,7 +88,9 @@
                     <Button Content="🚀 Auto-OC Boost Experiment" Command="{Binding RunAutoOcExperimentCommand}" 
                             Background="#7C3AED" Foreground="White" BorderThickness="0" Padding="10,5" Margin="0,0,8,0" Cursor="Hand" FontWeight="SemiBold" FontSize="11"/>
                     <Button Content="📦 Capture Black Box" Command="{Binding TriggerBlackBoxIncidentCommand}" 
-                            Background="#B45309" Foreground="White" BorderThickness="0" Padding="10,5" Cursor="Hand" FontWeight="SemiBold" FontSize="11"/>
+                            Background="#B45309" Foreground="White" BorderThickness="0" Padding="10,5" Margin="0,0,8,0" Cursor="Hand" FontWeight="SemiBold" FontSize="11"/>
+                    <Button Content="🛠 Auto-Recovery" Command="{Binding RunAutonomousRecoveryOrchestratorCommand}" 
+                            Background="#0284C7" Foreground="White" BorderThickness="0" Padding="10,5" Cursor="Hand" FontWeight="SemiBold" FontSize="11"/>
                 </StackPanel>
             </Grid>
         </Border>
@@ -386,6 +388,60 @@
                                                     <TextBlock Text="{Binding PowerOnHours, StringFormat='Power-On Hours: {0} hrs'}" Foreground="{StaticResource TextSecondary}" FontSize="11" Margin="0,0,16,0"/>
                                                     <TextBlock Text="{Binding ReallocatedSectors, StringFormat='Reallocated Sectors: {0}'}" Foreground="{StaticResource TextSecondary}" FontSize="11"/>
                                                 </StackPanel>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </Grid>
+                </TabItem>
+
+                <!-- TAB 5: Autonomous Recovery Manager -->
+                <TabItem Header="AUTONOMOUS RECOVERY" Foreground="{StaticResource TextPrimary}" FontWeight="Bold">
+                    <Grid Margin="0,14,0,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <!-- Recovery Status Banner -->
+                        <Border Grid.Row="0" Background="#0F172A" BorderBrush="{StaticResource AccentCyan}" BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,12">
+                            <Grid>
+                                <TextBlock Text="{Binding RecoveryStatusText}" Foreground="{StaticResource TextPrimary}" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center"/>
+                                <Button Content="Run Autonomous System Repair" Command="{Binding RunAutonomousRecoveryOrchestratorCommand}" 
+                                        Background="#0284C7" Foreground="White" BorderThickness="0" Padding="12,5" HorizontalAlignment="Right" Cursor="Hand" FontWeight="Bold" FontSize="11"/>
+                            </Grid>
+                        </Border>
+
+                        <!-- Execution Task Audit List -->
+                        <ListView Grid.Row="1" ItemsSource="{Binding RecoveryTasks}" Background="Transparent" BorderThickness="0">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="#0F172A" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <Border Grid.Column="0" Background="#065F46" CornerRadius="6" Padding="6,3" Margin="0,0,12,0" VerticalAlignment="Center">
+                                                <TextBlock Text="PASSED" Foreground="White" FontWeight="Bold" FontSize="10"/>
+                                            </Border>
+
+                                            <StackPanel Grid.Column="1">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding Action, StringFormat='Action: {0}'}" Foreground="{StaticResource AccentCyan}" FontWeight="Bold" FontSize="12"/>
+                                                    <TextBlock Text=" • " Foreground="{StaticResource TextSecondary}" FontSize="12"/>
+                                                    <TextBlock Text="{Binding CommandExecuted}" Foreground="{StaticResource TextSecondary}" FontSize="11" FontFamily="Consolas"/>
+                                                </StackPanel>
+                                                <TextBlock Text="{Binding Summary}" Foreground="{StaticResource TextPrimary}" FontSize="12" Margin="0,2,0,0"/>
+                                            </StackPanel>
+
+                                            <StackPanel Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding DurationMs, StringFormat='{}{0:F0} ms'}" Foreground="{StaticResource TextSecondary}" FontSize="11" HorizontalAlignment="Right"/>
+                                                <TextBlock Text="{Binding ExecutedAt, StringFormat='{}{0:HH:mm:ss} UTC'}" Foreground="{StaticResource TextSecondary}" FontSize="11" HorizontalAlignment="Right"/>
                                             </StackPanel>
                                         </Grid>
                                     </Border>

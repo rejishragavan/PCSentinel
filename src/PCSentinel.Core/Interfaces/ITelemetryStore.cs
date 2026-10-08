@@ -25,6 +25,9 @@ public interface ITelemetryStore : IAsyncDisposable
     Task StoreOcExperimentAsync(OcExperiment experiment, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<OcExperiment>> GetOcExperimentsAsync(int count, CancellationToken cancellationToken = default);
 
+    Task StoreRecoveryAuditAsync(RecoveryTaskResult task, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<RecoveryTaskResult>> GetRecoveryAuditsAsync(int count, CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<TelemetrySample>> GetRecentSamplesAsync(int count, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<HealthEvent>> GetRecentEventsAsync(int count, CancellationToken cancellationToken = default);
     Task<HealthScore?> GetLatestHealthScoreAsync(CancellationToken cancellationToken = default);
