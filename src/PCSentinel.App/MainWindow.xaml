@@ -5,8 +5,8 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="clr-namespace:PCSentinel.App.ViewModels"
         mc:Ignorable="d"
-        Title="PC Sentinel — Hardware Health, Baseline &amp; Diagnostics"
-        Height="820" Width="1160"
+        Title="PC Sentinel — Autonomous PC Health, Diagnostics &amp; Overclocking Lab"
+        Height="860" Width="1200"
         Background="{StaticResource BgDark}"
         WindowStartupLocation="CenterScreen">
 
@@ -14,15 +14,16 @@
         <vm:DashboardViewModel />
     </Window.DataContext>
 
-    <Grid Margin="24">
+    <Grid Margin="20">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Top Header & Status Bar -->
-        <Border Grid.Row="0" Background="{StaticResource CardBg}" CornerRadius="12" Padding="20,16" Margin="0,0,0,18">
+        <!-- Top Header & Live Status Bar -->
+        <Border Grid.Row="0" Background="{StaticResource CardBg}" CornerRadius="12" Padding="20,14" Margin="0,0,0,14">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
@@ -67,92 +68,117 @@
             </Grid>
         </Border>
 
+        <!-- Interactive Demo Scenario Control Bar (For Live Presentations & Testing) -->
+        <Border Grid.Row="1" Background="#1E293B" CornerRadius="10" Padding="14,10" Margin="0,0,0,14" BorderBrush="#334155" BorderThickness="1">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Text="INTERACTIVE DEMO CONTROLS:" Foreground="{StaticResource AccentCyan}" FontWeight="Bold" FontSize="12" VerticalAlignment="Center" Margin="0,0,14,0"/>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="🟢 Normal Gaming" Command="{Binding SetScenarioNormalGamingCommand}" 
+                            Background="#065F46" Foreground="White" BorderThickness="0" Padding="10,5" Margin="0,0,8,0" Cursor="Hand" FontWeight="SemiBold" FontSize="11"/>
+                    <Button Content="🔴 Thermal Throttle" Command="{Binding SetScenarioThermalThrottleCommand}" 
+                            Background="#991B1B" Foreground="White" BorderThickness="0" Padding="10,5" Margin="0,0,8,0" Cursor="Hand" FontWeight="SemiBold" FontSize="11"/>
+                    <Button Content="⚡ Run 3D Benchmark" Command="{Binding RunOcBenchmarkCommand}" 
+                            Background="#1E40AF" Foreground="White" BorderThickness="0" Padding="10,5" Margin="0,0,8,0" Cursor="Hand" FontWeight="SemiBold" FontSize="11"/>
+                    <Button Content="🚀 Auto-OC Boost Experiment" Command="{Binding RunAutoOcExperimentCommand}" 
+                            Background="#7C3AED" Foreground="White" BorderThickness="0" Padding="10,5" Margin="0,0,8,0" Cursor="Hand" FontWeight="SemiBold" FontSize="11"/>
+                    <Button Content="📦 Capture Black Box" Command="{Binding TriggerBlackBoxIncidentCommand}" 
+                            Background="#B45309" Foreground="White" BorderThickness="0" Padding="10,5" Cursor="Hand" FontWeight="SemiBold" FontSize="11"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
         <!-- Metric Cards with Live History Sparklines -->
-        <Grid Grid.Row="1" Margin="0,0,0,18">
+        <Grid Grid.Row="2" Margin="0,0,0,14">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="16" />
+                <ColumnDefinition Width="14" />
                 <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="16" />
+                <ColumnDefinition Width="14" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
             <!-- CPU Card -->
-            <Border Grid.Column="0" Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="12" Padding="18">
+            <Border Grid.Column="0" Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="12" Padding="16">
                 <StackPanel>
-                    <Grid Margin="0,0,0,12">
+                    <Grid Margin="0,0,0,10">
                         <TextBlock Text="PROCESSOR (CPU)" Foreground="{StaticResource AccentCyan}" FontWeight="Bold" FontSize="13"/>
                         <TextBlock Text="{Binding CpuTemp, StringFormat='{}{0:F1} °C'}" Foreground="{StaticResource TextPrimary}" FontWeight="Bold" FontSize="14" HorizontalAlignment="Right"/>
                     </Grid>
 
                     <!-- Real-Time Sparkline Canvas -->
-                    <Border Background="#0F172A" CornerRadius="6" Height="55" Margin="0,0,0,12" Padding="4">
+                    <Border Background="#0F172A" CornerRadius="6" Height="50" Margin="0,0,0,10" Padding="4">
                         <Canvas ClipToBounds="True">
                             <Polyline Points="{Binding CpuSparkline}" Stroke="{StaticResource AccentCyan}" StrokeThickness="2" />
                         </Canvas>
                     </Border>
 
-                    <Grid Margin="0,0,0,6">
+                    <Grid Margin="0,0,0,5">
                         <TextBlock Text="Core Clock" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
-                        <TextBlock Text="{Binding CpuClock, StringFormat='{}{0:F0} MHz'}" Foreground="{StaticResource TextPrimary}" FontWeight="SemiBold" FontSize="13" HorizontalAlignment="Right"/>
+                        <TextBlock Text="{Binding CpuClock, StringFormat='{}{0:F0} MHz'}" Foreground="{StaticResource TextPrimary}" FontWeight="SemiBold" FontSize="12" HorizontalAlignment="Right"/>
                     </Grid>
-                    <Grid Margin="0,0,0,6">
+                    <Grid Margin="0,0,0,5">
                         <TextBlock Text="Package Power" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
-                        <TextBlock Text="{Binding CpuPower, StringFormat='{}{0:F1} W'}" Foreground="{StaticResource TextPrimary}" FontWeight="SemiBold" FontSize="13" HorizontalAlignment="Right"/>
+                        <TextBlock Text="{Binding CpuPower, StringFormat='{}{0:F1} W'}" Foreground="{StaticResource TextPrimary}" FontWeight="SemiBold" FontSize="12" HorizontalAlignment="Right"/>
                     </Grid>
                     <Grid>
-                        <TextBlock Text="Core Load" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
-                        <TextBlock Text="{Binding CpuLoad, StringFormat='{}{0:F0} %'}" Foreground="{StaticResource TextPrimary}" FontWeight="SemiBold" FontSize="13" HorizontalAlignment="Right"/>
+                        <TextBlock Text="Total Load" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
+                        <TextBlock Text="{Binding CpuLoad, StringFormat='{}{0:F0} %'}" Foreground="{StaticResource TextPrimary}" FontWeight="SemiBold" FontSize="12" HorizontalAlignment="Right"/>
                     </Grid>
                 </StackPanel>
             </Border>
 
             <!-- GPU Card -->
-            <Border Grid.Column="2" Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="12" Padding="18">
+            <Border Grid.Column="2" Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="12" Padding="16">
                 <StackPanel>
-                    <Grid Margin="0,0,0,12">
+                    <Grid Margin="0,0,0,10">
                         <TextBlock Text="GRAPHICS (GPU)" Foreground="{StaticResource AccentCyan}" FontWeight="Bold" FontSize="13"/>
                         <TextBlock Text="{Binding GpuTemp, StringFormat='{}{0:F1} °C'}" Foreground="{StaticResource TextPrimary}" FontWeight="Bold" FontSize="14" HorizontalAlignment="Right"/>
                     </Grid>
 
                     <!-- Real-Time Sparkline Canvas -->
-                    <Border Background="#0F172A" CornerRadius="6" Height="55" Margin="0,0,0,12" Padding="4">
+                    <Border Background="#0F172A" CornerRadius="6" Height="50" Margin="0,0,0,10" Padding="4">
                         <Canvas ClipToBounds="True">
                             <Polyline Points="{Binding GpuSparkline}" Stroke="{StaticResource AccentGreen}" StrokeThickness="2" />
                         </Canvas>
                     </Border>
 
-                    <Grid Margin="0,0,0,6">
+                    <Grid Margin="0,0,0,5">
                         <TextBlock Text="Hotspot / Fan" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                            <TextBlock Text="{Binding GpuHotspot, StringFormat='{}{0:F1} °C'}" Foreground="{StaticResource TextPrimary}" FontWeight="SemiBold" FontSize="13"/>
+                            <TextBlock Text="{Binding GpuHotspot, StringFormat='{}{0:F1} °C'}" Foreground="{StaticResource TextPrimary}" FontWeight="SemiBold" FontSize="12"/>
                             <TextBlock Text=" • " Foreground="{StaticResource TextSecondary}" FontSize="12"/>
                             <TextBlock Text="{Binding GpuFan, StringFormat='{}{0:F0}%'}" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
                         </StackPanel>
                     </Grid>
-                    <Grid Margin="0,0,0,6">
+                    <Grid Margin="0,0,0,5">
                         <TextBlock Text="Core Clock" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
-                        <TextBlock Text="{Binding GpuClock, StringFormat='{}{0:F0} MHz'}" Foreground="{StaticResource TextPrimary}" FontWeight="SemiBold" FontSize="13" HorizontalAlignment="Right"/>
+                        <TextBlock Text="{Binding GpuClock, StringFormat='{}{0:F0} MHz'}" Foreground="{StaticResource TextPrimary}" FontWeight="SemiBold" FontSize="12" HorizontalAlignment="Right"/>
                     </Grid>
                     <Grid>
-                        <TextBlock Text="Power / Load" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
-                        <TextBlock Text="{Binding GpuLoad, StringFormat='{}{0:F0} %'}" Foreground="{StaticResource TextPrimary}" FontWeight="SemiBold" FontSize="13" HorizontalAlignment="Right"/>
+                        <TextBlock Text="Power Draw" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
+                        <TextBlock Text="{Binding GpuPower, StringFormat='{}{0:F1} W'}" Foreground="{StaticResource TextPrimary}" FontWeight="SemiBold" FontSize="12" HorizontalAlignment="Right"/>
                     </Grid>
                 </StackPanel>
             </Border>
 
-            <!-- RAM & Test Controls Card -->
-            <Border Grid.Column="4" Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="12" Padding="18">
+            <!-- RAM & System Overview Card -->
+            <Border Grid.Column="4" Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="12" Padding="16">
                 <StackPanel>
-                    <TextBlock Text="SYSTEM &amp; SENTINEL NODE" Foreground="{StaticResource AccentCyan}" FontWeight="Bold" FontSize="13" Margin="0,0,0,14"/>
+                    <TextBlock Text="SYSTEM &amp; STORAGE" Foreground="{StaticResource AccentCyan}" FontWeight="Bold" FontSize="13" Margin="0,0,0,10"/>
 
                     <Grid Margin="0,0,0,6">
                         <TextBlock Text="RAM Used" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
-                        <TextBlock Text="{Binding RamUsedGb, StringFormat='{}{0:F1} GB'}" Foreground="{StaticResource TextPrimary}" FontWeight="SemiBold" FontSize="13" HorizontalAlignment="Right"/>
+                        <TextBlock Text="{Binding RamUsedGb, StringFormat='{}{0:F1} GB'}" Foreground="{StaticResource TextPrimary}" FontWeight="SemiBold" FontSize="12" HorizontalAlignment="Right"/>
                     </Grid>
                     <Grid Margin="0,0,0,6">
                         <TextBlock Text="RAM Saturation" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
-                        <TextBlock Text="{Binding RamLoad, StringFormat='{}{0:F1} %'}" Foreground="{StaticResource TextPrimary}" FontWeight="SemiBold" FontSize="13" HorizontalAlignment="Right"/>
+                        <TextBlock Text="{Binding RamLoad, StringFormat='{}{0:F1} %'}" Foreground="{StaticResource TextPrimary}" FontWeight="SemiBold" FontSize="12" HorizontalAlignment="Right"/>
                     </Grid>
                     <Grid Margin="0,0,0,6">
                         <TextBlock Text="OS Boot Timing" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
@@ -162,76 +188,162 @@
                         <TextBlock Text="PnP Drivers" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
                         <TextBlock Text="{Binding DriverHealthSummaryText}" Foreground="{StaticResource AccentCyan}" FontWeight="SemiBold" FontSize="12" HorizontalAlignment="Right"/>
                     </Grid>
-                    <Grid Margin="0,0,0,10">
-                        <TextBlock Text="Hardware Bus" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
-                        <TextBlock Text="USB Serial Active" Foreground="{StaticResource AccentGreen}" FontWeight="Bold" FontSize="12" HorizontalAlignment="Right"/>
+                    <Grid>
+                        <TextBlock Text="Storage Health" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
+                        <TextBlock Text="{Binding StorageSummaryText}" Foreground="{StaticResource AccentGreen}" FontWeight="SemiBold" FontSize="11" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" MaxWidth="180"/>
                     </Grid>
-
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                        <Button Content="Cycle Workload" 
-                                Command="{Binding CycleSimulationProfileCommand}" 
-                                Background="#334155" Foreground="{StaticResource TextPrimary}" BorderThickness="0" Padding="8,5" Margin="0,0,8,0" Cursor="Hand"/>
-                        <Button Content="Capture Black Box" 
-                                Command="{Binding TriggerBlackBoxIncidentCommand}" 
-                                Background="#991B1B" Foreground="White" BorderThickness="0" Padding="8,5" Cursor="Hand"/>
-                    </StackPanel>
                 </StackPanel>
             </Border>
         </Grid>
 
-        <!-- Root-Cause Diagnostics, Evidence & Alerts Feed -->
-        <Border Grid.Row="2" Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="12" Padding="20">
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                </Grid.RowDefinitions>
+        <!-- Lower Multi-View Tabbed Deck (Root-Cause Engine vs OC Lab vs Black Box) -->
+        <Border Grid.Row="3" Background="{StaticResource CardBg}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="12" Padding="18">
+            <TabControl Background="Transparent" BorderThickness="0">
+                
+                <!-- TAB 1: Root-Cause Diagnostics -->
+                <TabItem Header="ROOT-CAUSE DIAGNOSTICS &amp; ANOMALIES" Foreground="{StaticResource TextPrimary}" FontWeight="Bold">
+                    <Grid Margin="0,14,0,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
 
-                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,14">
-                    <TextBlock Text="ROOT-CAUSE CORRELATION ENGINE" Foreground="{StaticResource TextPrimary}" FontWeight="Bold" FontSize="15"/>
-                    <TextBlock Text=" (Explainable Multi-Signal Anomaly Diagnosis)" Foreground="{StaticResource TextSecondary}" FontSize="13" VerticalAlignment="Center"/>
-                </StackPanel>
+                        <!-- Deductions Breakdown -->
+                        <ItemsControl Grid.Row="0" ItemsSource="{Binding Deductions}" Margin="0,0,0,10">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="#1E293B" CornerRadius="6" Padding="8,4" Margin="0,0,0,4">
+                                        <TextBlock Text="{Binding Reason, StringFormat='- {0}'}" Foreground="{StaticResource AccentYellow}" FontSize="12"/>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
 
-                <!-- Active Events List -->
-                <ListView Grid.Row="1" ItemsSource="{Binding ActiveEvents}" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                    <ListView.ItemTemplate>
-                        <DataTemplate>
-                            <Border Background="#0F172A" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                        <!-- Events List -->
+                        <ListView Grid.Row="1" ItemsSource="{Binding ActiveEvents}" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="#0F172A" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <Border Grid.Column="0" Background="#991B1B" CornerRadius="6" Padding="8,4" VerticalAlignment="Top" Margin="0,0,12,0">
+                                                <TextBlock Text="{Binding Severity}" Foreground="White" FontWeight="Bold" FontSize="11"/>
+                                            </Border>
+
+                                            <StackPanel Grid.Column="1">
+                                                <TextBlock Text="{Binding Title}" Foreground="{StaticResource TextPrimary}" FontWeight="Bold" FontSize="13"/>
+                                                <TextBlock Text="{Binding Evidence}" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,3,0,2"/>
+                                                <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+                                                    <TextBlock Text="Recommendation: " Foreground="{StaticResource AccentCyan}" FontWeight="SemiBold" FontSize="12"/>
+                                                    <TextBlock Text="{Binding Recommendation}" Foreground="{StaticResource TextPrimary}" FontSize="12" TextWrapping="Wrap"/>
+                                                </StackPanel>
+                                            </StackPanel>
+
+                                            <Border Grid.Column="2" Background="#1E293B" CornerRadius="6" Padding="10,6" VerticalAlignment="Center">
+                                                <StackPanel HorizontalAlignment="Center">
+                                                    <TextBlock Text="CONFIDENCE" Foreground="{StaticResource TextSecondary}" FontSize="9" FontWeight="Bold"/>
+                                                    <TextBlock Text="{Binding Confidence, StringFormat='{}{0:P0}'}" Foreground="{StaticResource AccentGreen}" FontWeight="Bold" FontSize="14" HorizontalAlignment="Center"/>
+                                                </StackPanel>
+                                            </Border>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </Grid>
+                </TabItem>
+
+                <!-- TAB 2: OC Lab & Headroom Analysis -->
+                <TabItem Header="OC LAB &amp; HEADROOM ANALYZER" Foreground="{StaticResource TextPrimary}" FontWeight="Bold">
+                    <Grid Margin="0,14,0,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <!-- Headroom Card -->
+                        <Border Grid.Row="0" Background="#0F172A" BorderBrush="{StaticResource AccentCyan}" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,12">
+                            <StackPanel>
                                 <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-
-                                    <!-- Severity Badge -->
-                                    <Border Grid.Column="0" Background="#991B1B" CornerRadius="6" Padding="8,4" VerticalAlignment="Top" Margin="0,0,12,0">
-                                        <TextBlock Text="{Binding Severity}" Foreground="White" FontWeight="Bold" FontSize="11"/>
-                                    </Border>
-
-                                    <!-- Details -->
-                                    <StackPanel Grid.Column="1">
-                                        <TextBlock Text="{Binding Title}" Foreground="{StaticResource TextPrimary}" FontWeight="Bold" FontSize="14"/>
-                                        <TextBlock Text="{Binding Evidence}" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,2"/>
-                                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                            <TextBlock Text="Recommended Action: " Foreground="{StaticResource AccentCyan}" FontWeight="SemiBold" FontSize="12"/>
-                                            <TextBlock Text="{Binding Recommendation}" Foreground="{StaticResource TextPrimary}" FontSize="12" TextWrapping="Wrap"/>
-                                        </StackPanel>
-                                    </StackPanel>
-
-                                    <!-- Confidence -->
-                                    <Border Grid.Column="2" Background="#1E293B" CornerRadius="6" Padding="10,6" VerticalAlignment="Center">
-                                        <StackPanel HorizontalAlignment="Center">
-                                            <TextBlock Text="CONFIDENCE" Foreground="{StaticResource TextSecondary}" FontSize="9" FontWeight="Bold"/>
-                                            <TextBlock Text="{Binding Confidence, StringFormat='{}{0:P0}'}" Foreground="{StaticResource AccentGreen}" FontWeight="Bold" FontSize="14" HorizontalAlignment="Center"/>
-                                        </StackPanel>
-                                    </Border>
+                                    <TextBlock Text="{Binding OcHeadroomSummary}" Foreground="{StaticResource AccentCyan}" FontSize="16" FontWeight="Bold"/>
+                                    <TextBlock Text="SAFE TUNING HEADROOM" Foreground="{StaticResource TextSecondary}" FontSize="11" HorizontalAlignment="Right"/>
                                 </Grid>
-                            </Border>
-                        </DataTemplate>
-                    </ListView.ItemTemplate>
-                </ListView>
-            </Grid>
+                                <TextBlock Text="{Binding OcRationale}" Foreground="{StaticResource TextPrimary}" FontSize="13" Margin="0,6,0,0" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Benchmark Live Status -->
+                        <Border Grid.Row="1" Background="#1E293B" CornerRadius="8" Padding="14,10" Margin="0,0,0,12">
+                            <Grid>
+                                <TextBlock Text="{Binding LatestBenchmarkText}" Foreground="{StaticResource TextPrimary}" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center"/>
+                                <TextBlock Text="{Binding LatestOcExperimentText}" Foreground="{StaticResource AccentGreen}" FontWeight="Bold" FontSize="13" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                            </Grid>
+                        </Border>
+
+                        <!-- Experiment Log Table -->
+                        <ListView Grid.Row="2" ItemsSource="{Binding Experiments}" Background="Transparent" BorderThickness="0">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="#0F172A" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,6">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <TextBlock Grid.Column="0" Text="{Binding ExperimentNumber, StringFormat='Exp #{0}'}" Foreground="{StaticResource AccentCyan}" FontWeight="Bold" FontSize="12" Margin="0,0,12,0"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding SettingLabel}" Foreground="{StaticResource TextPrimary}" FontSize="12"/>
+                                            <TextBlock Grid.Column="2" Text="{Binding PerformanceGainPercent, StringFormat='{}{0:F1}% Gain'}" Foreground="{StaticResource AccentGreen}" FontWeight="Bold" FontSize="12" Margin="0,0,16,0"/>
+                                            <TextBlock Grid.Column="3" Text="{Binding MaxTempReachedC, StringFormat='{}Peak: {0:F1}°C'}" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </Grid>
+                </TabItem>
+
+                <!-- TAB 3: Incident Black Box Replayer -->
+                <TabItem Header="BLACK BOX INCIDENTS" Foreground="{StaticResource TextPrimary}" FontWeight="Bold">
+                    <Grid Margin="0,14,0,0">
+                        <ListView ItemsSource="{Binding RecentIncidents}" Background="Transparent" BorderThickness="0">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="#0F172A" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <Border Grid.Column="0" Background="#991B1B" CornerRadius="6" Padding="6,3" Margin="0,0,12,0" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding IncidentNumber, StringFormat='INC #{0:D4}'}" Foreground="White" FontWeight="Bold" FontSize="11"/>
+                                            </Border>
+
+                                            <StackPanel Grid.Column="1">
+                                                <TextBlock Text="{Binding TriggerReason}" Foreground="{StaticResource TextPrimary}" FontWeight="Bold" FontSize="13"/>
+                                                <TextBlock Text="{Binding PreEventWindow.Count, StringFormat='{}Pre-Crash Window: {0} samples captured | SQLite Persisted'}" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
+                                            </StackPanel>
+
+                                            <TextBlock Grid.Column="2" Text="{Binding Timestamp, StringFormat='{}{0:HH:mm:ss} UTC'}" Foreground="{StaticResource TextSecondary}" FontSize="12" VerticalAlignment="Center"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </Grid>
+                </TabItem>
+
+            </TabControl>
         </Border>
     </Grid>
 </Window>

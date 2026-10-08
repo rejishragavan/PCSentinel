@@ -61,13 +61,23 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
     [ObservableProperty] private string _driverHealthSummaryText = "Drivers: 48 OK (0 Errors)";
     [ObservableProperty] private string _incidentCountText = "Black Box: 0 Incidents";
 
+    [ObservableProperty] private string _ocHeadroomSummary = "Headroom: +95 MHz Boost (High Margin)";
+    [ObservableProperty] private string _ocRationale = "Thermal margin is +12°C with 70W power buffer. Safe to boost core frequency.";
+    [ObservableProperty] private string _latestBenchmarkText = "Benchmark: 142.5 FPS (Score: 14,250)";
+    [ObservableProperty] private string _latestOcExperimentText = "Last Experiment: Not run yet";
+    [ObservableProperty] private string _storageSummaryText = "Samsung 990 PRO 2TB: 99% Health, 41°C (Nominal)";
+
     public ObservableCollection<HealthEvent> ActiveEvents { get; } = new();
     public ObservableCollection<ScoreDeduction> Deductions { get; } = new();
     public ObservableCollection<IncidentReport> RecentIncidents { get; } = new();
+    public ObservableCollection<OcExperiment> Experiments { get; } = new();
+    public ObservableCollection<StorageDriveInfo> StorageDrives { get; } = new();
 
     private readonly PnpDeviceInspector _driverInspector;
     private readonly BootAnalyzer _bootAnalyzer;
     private readonly IncidentRecorder _incidentRecorder;
+    private readonly OcAnalyzer _ocAnalyzer;
+    private readonly StorageAnalyzer _storageAnalyzer;
 
     public DashboardViewModel()
     {
@@ -80,6 +90,8 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
         _driverInspector = new PnpDeviceInspector();
         _bootAnalyzer = new BootAnalyzer(_store);
         _incidentRecorder = new IncidentRecorder(_store, _driverInspector);
+        _ocAnalyzer = new OcAnalyzer(_store);
+        _storageAnalyzer = new StorageAnalyzer();
     }
 
     public async Task InitializeAsync()
@@ -164,6 +176,45 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
             sim.SetProfile(_currentSimProfile);
             ProviderModeText = $"SIMULATED ({_currentSimProfile})";
         }
+    }
+
+    [RelayCommand]
+    public void SetScenarioNormalGaming()
+    {
+        if (_provider is SimulatedSensorProvider sim)
+        {
+            _currentSimProfile = SimulationProfile.GamingHeavy;
+            sim.SetProfile(_currentSimProfile);
+            ProviderModeText = $"SIMULATED ({_currentSimProfile})";
+        }
+    }
+
+    [RelayCommand]
+    public void SetScenarioThermalThrottle()
+    {
+        if (_provider is SimulatedSensorProvider sim)
+        {
+            _currentSimProfile = SimulationProfile.ThermalThrottlingIncident;
+            sim.SetProfile(_currentSimProfile);
+            ProviderModeText = $"SIMULATED ({_currentSimProfile})";
+        }
+    }
+
+    [RelayCommand]
+    public async Task RunOcBenchmark()
+    {
+        LatestBenchmarkText = "Running 3D Benchmark (Measuring FPS & Power)...";
+        var res = await _ocAnalyzer.RunBenchmarkAsync(10, 0.0);
+        LatestBenchmarkText = $"Benchmark: {res.AverageFps:F1} FPS (Score: {res.Score:N0}) @ {res.AvgGpuClockMhz:F0}MHz";
+    }
+
+    [RelayCommand]
+    public async Task RunAutoOcExperiment()
+    {
+        LatestOcExperimentText = "Executing Controlled Boost (+85 MHz)...";
+        var exp = await _ocAnalyzer.ExecuteControlledExperimentAsync("Sentinel Auto-Tuned Boost (+85 MHz)", 85.0, 0.0);
+        Experiments.Insert(0, exp);
+        LatestOcExperimentText = $"Exp #{exp.ExperimentNumber}: +85MHz -> +{exp.PerformanceGainPercent:F1}% FPS ({exp.BaselineFps:F1} -> {exp.ExperimentFps:F1} FPS) [Stable]";
     }
 
     [RelayCommand]
@@ -256,6 +307,10 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
             {
                 Deductions.Add(d);
             }
+
+            var headroom = _ocAnalyzer.EstimateHeadroom(sample, baseline);
+            OcHeadroomSummary = $"Headroom: +{headroom.RecommendedClockDeltaMhz:F0} MHz ({headroom.ThermalHeadroom} Margin)";
+            OcRationale = headroom.Rationale;
         });
     }
 

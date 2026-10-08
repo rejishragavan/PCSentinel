@@ -136,6 +136,40 @@ public sealed class SqliteTelemetryStore : ITelemetryStore
             );
 
             CREATE INDEX IF NOT EXISTS IX_Incidents_Timestamp ON Incidents (Timestamp DESC);
+
+            CREATE TABLE IF NOT EXISTS Benchmarks (
+                Id TEXT PRIMARY KEY,
+                BenchmarkName TEXT NOT NULL,
+                Timestamp TEXT NOT NULL,
+                DurationSeconds INTEGER NOT NULL,
+                Score INTEGER NOT NULL,
+                AverageFps REAL NOT NULL,
+                AvgCpuTemp REAL NOT NULL,
+                AvgGpuTemp REAL NOT NULL,
+                AvgGpuClock REAL NOT NULL,
+                PeakPower REAL NOT NULL,
+                IsOverclocked INTEGER NOT NULL,
+                ClockOffsetMhz REAL NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_Benchmarks_Timestamp ON Benchmarks (Timestamp DESC);
+
+            CREATE TABLE IF NOT EXISTS OCExperiments (
+                Id TEXT PRIMARY KEY,
+                ExperimentNumber INTEGER NOT NULL,
+                Timestamp TEXT NOT NULL,
+                SettingLabel TEXT NOT NULL,
+                GpuClockOffsetMhz REAL NOT NULL,
+                GpuVoltageOffsetMv REAL NOT NULL,
+                StabilityPassed INTEGER NOT NULL,
+                BaselineFps REAL NOT NULL,
+                ExperimentFps REAL NOT NULL,
+                PerformanceGainPercent REAL NOT NULL,
+                MaxTempReachedC REAL NOT NULL,
+                Notes TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_OCExperiments_Timestamp ON OCExperiments (Timestamp DESC);
         ";
 
         await using var cmd = conn.CreateCommand();
@@ -532,6 +566,142 @@ public sealed class SqliteTelemetryStore : ITelemetryStore
                 PostEventWindow = System.Text.Json.JsonSerializer.Deserialize<List<TelemetrySample>>(postJson) ?? new(),
                 CorrelatedEvents = System.Text.Json.JsonSerializer.Deserialize<List<HealthEvent>>(eventsJson) ?? new(),
                 DegradedDrivers = System.Text.Json.JsonSerializer.Deserialize<List<DriverInfo>>(driversJson) ?? new()
+            });
+        }
+
+        return list;
+    }
+
+    public async Task StoreBenchmarkResultAsync(BenchmarkResult result, CancellationToken cancellationToken = default)
+    {
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(cancellationToken);
+
+        const string sql = @"
+            INSERT INTO Benchmarks (
+                Id, BenchmarkName, Timestamp, DurationSeconds, Score, AverageFps,
+                AvgCpuTemp, AvgGpuTemp, AvgGpuClock, PeakPower, IsOverclocked, ClockOffsetMhz
+            ) VALUES (
+                @Id, @BenchmarkName, @Timestamp, @DurationSeconds, @Score, @AverageFps,
+                @AvgCpuTemp, @AvgGpuTemp, @AvgGpuClock, @PeakPower, @IsOverclocked, @ClockOffsetMhz
+            );
+        ";
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.Parameters.AddWithValue("@Id", result.Id.ToString());
+        cmd.Parameters.AddWithValue("@BenchmarkName", result.BenchmarkName);
+        cmd.Parameters.AddWithValue("@Timestamp", result.Timestamp.ToString("O"));
+        cmd.Parameters.AddWithValue("@DurationSeconds", result.DurationSeconds);
+        cmd.Parameters.AddWithValue("@Score", result.Score);
+        cmd.Parameters.AddWithValue("@AverageFps", result.AverageFps);
+        cmd.Parameters.AddWithValue("@AvgCpuTemp", result.AvgCpuTempC);
+        cmd.Parameters.AddWithValue("@AvgGpuTemp", result.AvgGpuTempC);
+        cmd.Parameters.AddWithValue("@AvgGpuClock", result.AvgGpuClockMhz);
+        cmd.Parameters.AddWithValue("@PeakPower", result.PeakPowerWatts);
+        cmd.Parameters.AddWithValue("@IsOverclocked", result.IsOverclocked ? 1 : 0);
+        cmd.Parameters.AddWithValue("@ClockOffsetMhz", result.ClockOffsetMhz);
+
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<BenchmarkResult>> GetBenchmarkResultsAsync(int count, CancellationToken cancellationToken = default)
+    {
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(cancellationToken);
+
+        const string sql = "SELECT * FROM Benchmarks ORDER BY Timestamp DESC LIMIT @Count;";
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.Parameters.AddWithValue("@Count", count);
+
+        var list = new List<BenchmarkResult>();
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            list.Add(new BenchmarkResult
+            {
+                Id = Guid.Parse(reader.GetString(0)),
+                BenchmarkName = reader.GetString(1),
+                Timestamp = DateTimeOffset.Parse(reader.GetString(2)),
+                DurationSeconds = reader.GetInt32(3),
+                Score = reader.GetInt32(4),
+                AverageFps = reader.GetDouble(5),
+                AvgCpuTempC = reader.GetDouble(6),
+                AvgGpuTempC = reader.GetDouble(7),
+                AvgGpuClockMhz = reader.GetDouble(8),
+                PeakPowerWatts = reader.GetDouble(9),
+                IsOverclocked = reader.GetInt32(10) == 1,
+                ClockOffsetMhz = reader.GetDouble(11)
+            });
+        }
+
+        return list;
+    }
+
+    public async Task StoreOcExperimentAsync(OcExperiment experiment, CancellationToken cancellationToken = default)
+    {
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(cancellationToken);
+
+        const string sql = @"
+            INSERT INTO OCExperiments (
+                Id, ExperimentNumber, Timestamp, SettingLabel, GpuClockOffsetMhz,
+                GpuVoltageOffsetMv, StabilityPassed, BaselineFps, ExperimentFps,
+                PerformanceGainPercent, MaxTempReachedC, Notes
+            ) VALUES (
+                @Id, @ExperimentNumber, @Timestamp, @SettingLabel, @GpuClockOffsetMhz,
+                @GpuVoltageOffsetMv, @StabilityPassed, @BaselineFps, @ExperimentFps,
+                @PerformanceGainPercent, @MaxTempReachedC, @Notes
+            );
+        ";
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.Parameters.AddWithValue("@Id", experiment.Id.ToString());
+        cmd.Parameters.AddWithValue("@ExperimentNumber", experiment.ExperimentNumber);
+        cmd.Parameters.AddWithValue("@Timestamp", experiment.Timestamp.ToString("O"));
+        cmd.Parameters.AddWithValue("@SettingLabel", experiment.SettingLabel);
+        cmd.Parameters.AddWithValue("@GpuClockOffsetMhz", experiment.GpuClockOffsetMhz);
+        cmd.Parameters.AddWithValue("@GpuVoltageOffsetMv", experiment.GpuVoltageOffsetMv);
+        cmd.Parameters.AddWithValue("@StabilityPassed", experiment.StabilityPassed ? 1 : 0);
+        cmd.Parameters.AddWithValue("@BaselineFps", experiment.BaselineFps);
+        cmd.Parameters.AddWithValue("@ExperimentFps", experiment.ExperimentFps);
+        cmd.Parameters.AddWithValue("@PerformanceGainPercent", experiment.PerformanceGainPercent);
+        cmd.Parameters.AddWithValue("@MaxTempReachedC", experiment.MaxTempReachedC);
+        cmd.Parameters.AddWithValue("@Notes", experiment.Notes);
+
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<OcExperiment>> GetOcExperimentsAsync(int count, CancellationToken cancellationToken = default)
+    {
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(cancellationToken);
+
+        const string sql = "SELECT * FROM OCExperiments ORDER BY Timestamp DESC LIMIT @Count;";
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.Parameters.AddWithValue("@Count", count);
+
+        var list = new List<OcExperiment>();
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            list.Add(new OcExperiment
+            {
+                Id = Guid.Parse(reader.GetString(0)),
+                ExperimentNumber = reader.GetInt32(1),
+                Timestamp = DateTimeOffset.Parse(reader.GetString(2)),
+                SettingLabel = reader.GetString(3),
+                GpuClockOffsetMhz = reader.GetDouble(4),
+                GpuVoltageOffsetMv = reader.GetDouble(5),
+                StabilityPassed = reader.GetInt32(6) == 1,
+                BaselineFps = reader.GetDouble(7),
+                ExperimentFps = reader.GetDouble(8),
+                PerformanceGainPercent = reader.GetDouble(9),
+                MaxTempReachedC = reader.GetDouble(10),
+                Notes = reader.IsDBNull(11) ? string.Empty : reader.GetString(11)
             });
         }
 

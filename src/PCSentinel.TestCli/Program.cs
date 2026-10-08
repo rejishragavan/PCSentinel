@@ -14,8 +14,8 @@ internal static class Program
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("================================================================================");
-        Console.WriteLine("                         PC SENTINEL — MILESTONE 3                              ");
-        Console.WriteLine("  OS Diagnostics, Boot Transition Analysis & Incident Black Box Recorder        ");
+        Console.WriteLine("                         PC SENTINEL — FULL SYSTEM DEMO                         ");
+        Console.WriteLine("   Telemetry, Root-Cause Diagnostics, Boot, Drivers, OC Lab & Black Box         ");
         Console.WriteLine("================================================================================");
         Console.ResetColor();
 
@@ -23,6 +23,7 @@ internal static class Program
         bool simulateThrottle = args.Contains("--throttle");
         bool simulateBootRegression = args.Contains("--boot-regression");
         bool triggerTestIncident = args.Contains("--trigger-incident");
+        bool runOcDemo = args.Contains("--oc-lab") || args.Contains("--auto-oc");
         string comPort = args.FirstOrDefault(a => a.StartsWith("--com="))?.Split('=')[1] ?? "VIRTUAL";
 
         ISensorProvider provider;
@@ -56,7 +57,18 @@ internal static class Program
             Console.WriteLine($"  {icon} [{d.Category}] {d.DeviceName} ({d.Status}) {d.ErrorDescription}");
         }
 
-        // 2. Boot Transition Subsystem (Phase 12 & 13)
+        // 2. Storage SMART Subsystem (Phase 15)
+        var storageAnalyzer = new StorageAnalyzer(simulateDegraded: args.Contains("--broken-storage"));
+        var drives = await storageAnalyzer.InspectStorageDrivesAsync();
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine($"[STORAGE] Detected {drives.Count} drive(s):");
+        Console.ResetColor();
+        foreach (var drv in drives)
+        {
+            Console.WriteLine($"  • {drv.Model} ({drv.InterfaceType}) — Health: {drv.HealthPercentage}% | Temp: {drv.TemperatureC:F0}°C | Reallocated: {drv.ReallocatedSectors} | {drv.DegradationRisk}");
+        }
+
+        // 3. Boot Transition Subsystem (Phase 12 & 13)
         var bootAnalyzer = new BootAnalyzer(store, simulateRegression: simulateBootRegression);
         var latestBoot = await bootAnalyzer.AnalyzeLatestBootAsync();
         if (latestBoot != null)
@@ -70,7 +82,7 @@ internal static class Program
             Console.ResetColor();
         }
 
-        // 3. Black Box Incident Recorder (Phase 14)
+        // 4. Black Box Incident Recorder (Phase 14)
         var incidentRecorder = new IncidentRecorder(store, driverInspector);
         incidentRecorder.IncidentLogged += (s, inc) =>
         {
@@ -79,7 +91,53 @@ internal static class Program
             Console.ResetColor();
         };
 
-        // 4. USB Sentinel Node & Core Bus
+        // 5. OC Lab Analyzer (Phase 18)
+        var ocAnalyzer = new OcAnalyzer(store);
+
+        // If user specifically requested OC Lab standalone demo
+        if (runOcDemo)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("\n================================================================================");
+            Console.WriteLine("                    OC LAB — AUTO-OVERCLOCKING DEMO RUNNER                      ");
+            Console.WriteLine("================================================================================");
+            Console.ResetColor();
+
+            var sampleTelemetry = new TelemetrySample
+            {
+                CpuTemperatureC = 62.0,
+                CpuClockMhz = 4750.0,
+                GpuTemperatureC = 68.5,
+                GpuClockMhz = 1845.0,
+                GpuPowerWatts = 210.0,
+                GpuLoadPercent = 95.0
+            };
+
+            Console.WriteLine("\n[1] Calculating Hardware Safe Tuning Headroom...");
+            var headroom = ocAnalyzer.EstimateHeadroom(sampleTelemetry);
+            Console.WriteLine($"    Thermal Headroom: {headroom.ThermalHeadroom}");
+            Console.WriteLine($"    Power Headroom:   {headroom.PowerHeadroom}");
+            Console.WriteLine($"    Clock Headroom:   {headroom.ClockHeadroom}");
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"    Recommended Safe Boost: +{headroom.RecommendedClockDeltaMhz:F0} MHz (Confidence: {headroom.Confidence * 100:F0}%)");
+            Console.ResetColor();
+            Console.WriteLine($"    Technical Rationale:    {headroom.Rationale}");
+
+            Console.WriteLine("\n[2] Executing Controlled Stability Experiment (Stock vs +85 MHz Boost)...");
+            var exp = await ocAnalyzer.ExecuteControlledExperimentAsync("Sentinel Auto-Tuned Profile (+85 MHz)", 85.0, 0.0);
+
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine($"    Baseline Framerate:   {exp.BaselineFps:F1} FPS @ 1845 MHz");
+            Console.WriteLine($"    Overclock Framerate:  {exp.ExperimentFps:F1} FPS @ 1930 MHz");
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"    Performance Gain:     +{exp.PerformanceGainPercent:F1}% FPS Boost");
+            Console.WriteLine($"    Thermal Stability:    {(exp.StabilityPassed ? "PASSED (Safe peak temp: " + exp.MaxTempReachedC + "°C)" : "FAILED (Overheated)")}");
+            Console.ResetColor();
+            Console.WriteLine($"    Status:               Persisted cleanly to SQLite OCExperiments table.");
+            Console.WriteLine("================================================================================\n");
+        }
+
+        // 6. USB Sentinel Node & Core Bus
         var sentinelNode = new UsbSerialSentinelNode();
         await sentinelNode.ConnectAsync(comPort);
         Console.WriteLine($"[INIT] Sentinel Node interface: {sentinelNode.PortName} (Active: {sentinelNode.IsConnected})");
@@ -134,7 +192,10 @@ internal static class Program
             // 4. Multi-Signal Diagnostic Correlation
             var analysis = correlationEngine.Analyze(sample, activeBaseline);
 
-            // 5. Black Box Trigger on Critical Events or Test Flag
+            // 5. Calculate OC Headroom
+            var ocHeadroom = ocAnalyzer.EstimateHeadroom(sample, activeBaseline);
+
+            // 6. Black Box Trigger on Critical Events or Test Flag
             if ((analysis.DetectedEvents.Any(e => e.Severity == EventSeverity.Critical) || triggerTestIncident) && !incidentTriggered)
             {
                 incidentTriggered = true;
@@ -145,17 +206,17 @@ internal static class Program
                     analysis.DetectedEvents);
             }
 
-            // 6. Persistence
+            // 7. Persistence
             await store.StoreTelemetrySampleAsync(sample);
             await store.StoreHealthScoreAsync(analysis.Score);
 
-            // 7. Forward Alerts
+            // 8. Forward Alerts
             foreach (var evt in analysis.DetectedEvents)
             {
                 await alertManager.PublishAlertAsync(evt);
             }
 
-            // 8. Transmit to ESP32-S3 Sentinel Node
+            // 9. Transmit to ESP32-S3 Sentinel Node
             var packet = new SentinelPacket
             {
                 Type = "status",
@@ -170,8 +231,8 @@ internal static class Program
             };
             await sentinelNode.SendTelemetryAsync(packet);
 
-            // 9. Render Console Dashboard
-            RenderTelemetry(sample, workload, activeBaseline, analysis, driverSummary, latestBoot, sampleCounter);
+            // 10. Render Console Dashboard
+            RenderTelemetry(sample, workload, activeBaseline, analysis, driverSummary, latestBoot, ocHeadroom, drives.FirstOrDefault(), sampleCounter);
         };
 
         collector.CollectionError += (s, ex) =>
@@ -181,7 +242,7 @@ internal static class Program
             Console.ResetColor();
         };
 
-        Console.WriteLine("[START] Collector running (Press Ctrl+C to stop)...");
+        Console.WriteLine("[START] Real-time collector running (Press Ctrl+C to stop)...");
         await collector.StartAsync();
 
         try
@@ -195,8 +256,8 @@ internal static class Program
         await store.DisposeAsync();
 
         Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine($"\n[COMPLETE] Milestone 3 verification finished. Processed {sampleCounter} telemetry frames.");
-        Console.WriteLine($"[STORAGE] Verified: All frames, boot sessions, and incidents persisted cleanly to SQLite: {dbPath}");
+        Console.WriteLine($"\n[COMPLETE] PC Sentinel demo finished. Processed {sampleCounter} telemetry frames.");
+        Console.WriteLine($"[STORAGE] Verified: All frames, boot sessions, OC experiments, and incidents persisted cleanly to SQLite: {dbPath}");
         Console.ResetColor();
     }
 
@@ -207,6 +268,8 @@ internal static class Program
         AnalysisResult analysis,
         DriverHealthSummary drivers,
         BootSession? boot,
+        OcHeadroomEstimate oc,
+        StorageDriveInfo? drive,
         int count)
     {
         Console.Clear();
@@ -246,11 +309,20 @@ internal static class Program
         PrintMetric("Fan", sample.GpuFanPercent, "%", null, null);
         Console.WriteLine();
 
-        // RAM
+        // RAM & Storage
         Console.Write("RAM:     ");
         PrintMetric("Used", sample.RamUsedGb, " GB", null, null);
         PrintMetric("Load", sample.RamLoadPercent, "%", 85, 94);
+        if (drive != null)
+        {
+            Console.Write($" | SSD: {drive.TemperatureC:F0}°C ({drive.HealthPercentage}% Health)");
+        }
         Console.WriteLine();
+
+        // OC Lab Headroom
+        Console.ForegroundColor = oc.RecommendedClockDeltaMhz > 0 ? ConsoleColor.Cyan : ConsoleColor.DarkGray;
+        Console.WriteLine($"OC Lab:  Headroom: +{oc.RecommendedClockDeltaMhz:F0} MHz ({oc.ThermalHeadroom} Thermal Margin, Confidence: {oc.Confidence * 100:F0}%)");
+        Console.ResetColor();
 
         // Driver Health Status
         Console.ForegroundColor = drivers.HasCriticalFailure ? ConsoleColor.Red : ConsoleColor.DarkGray;

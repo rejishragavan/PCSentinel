@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\PCSentinel.Core\PCSentinel.Core.csproj" />
+    <ProjectReference Include="..\PCSentinel.Storage\PCSentinel.Storage.csproj" />
   </ItemGroup>
 
 </Project>
