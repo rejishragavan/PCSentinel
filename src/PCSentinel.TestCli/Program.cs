@@ -1,6 +1,7 @@
 using PCSentinel.Analysis;
 using PCSentinel.Core.Interfaces;
 using PCSentinel.Core.Models;
+using PCSentinel.Diagnostics;
 using PCSentinel.Hardware;
 using PCSentinel.Storage;
 
@@ -13,13 +14,15 @@ internal static class Program
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("================================================================================");
-        Console.WriteLine("                         PC SENTINEL — MILESTONE 2                              ");
-        Console.WriteLine("      Multi-Signal Diagnostics, Baseline Learning & Sentinel Node Bus           ");
+        Console.WriteLine("                         PC SENTINEL — MILESTONE 3                              ");
+        Console.WriteLine("  OS Diagnostics, Boot Transition Analysis & Incident Black Box Recorder        ");
         Console.WriteLine("================================================================================");
         Console.ResetColor();
 
         bool forceSimulate = args.Contains("--simulate") || !OperatingSystem.IsWindows();
         bool simulateThrottle = args.Contains("--throttle");
+        bool simulateBootRegression = args.Contains("--boot-regression");
+        bool triggerTestIncident = args.Contains("--trigger-incident");
         string comPort = args.FirstOrDefault(a => a.StartsWith("--com="))?.Split('=')[1] ?? "VIRTUAL";
 
         ISensorProvider provider;
@@ -41,7 +44,42 @@ internal static class Program
         Console.WriteLine($"[INIT] Initializing SQLite database: {dbPath}");
         await store.InitializeDatabaseAsync();
 
-        // Connect USB Serial Sentinel Node (or Virtual loopback)
+        // 1. Diagnostics Subsystem
+        var driverInspector = new PnpDeviceInspector(simulateDegraded: args.Contains("--broken-driver"));
+        var driverSummary = await driverInspector.ScanDriversAsync();
+        Console.ForegroundColor = driverSummary.HasCriticalFailure ? ConsoleColor.Red : ConsoleColor.Green;
+        Console.WriteLine($"[DIAGNOSTICS] PnP Drivers: {driverSummary.HealthyCount} Healthy, {driverSummary.ErrorCount} Errored, {driverSummary.DegradedCount} Degraded");
+        Console.ResetColor();
+        foreach (var d in driverSummary.Devices)
+        {
+            var icon = d.Status == DeviceStatusCode.Ok ? "✓" : "⚠";
+            Console.WriteLine($"  {icon} [{d.Category}] {d.DeviceName} ({d.Status}) {d.ErrorDescription}");
+        }
+
+        // 2. Boot Transition Subsystem (Phase 12 & 13)
+        var bootAnalyzer = new BootAnalyzer(store, simulateRegression: simulateBootRegression);
+        var latestBoot = await bootAnalyzer.AnalyzeLatestBootAsync();
+        if (latestBoot != null)
+        {
+            Console.ForegroundColor = latestBoot.IsRegression ? ConsoleColor.Red : ConsoleColor.Green;
+            Console.WriteLine($"[BOOT] Duration: {latestBoot.TotalBootDurationMs / 1000.0:F1}s (Driver Init: {latestBoot.DriverInitDurationMs / 1000.0:F1}s, Apps: {latestBoot.PostBootDurationMs / 1000.0:F1}s)");
+            if (latestBoot.IsRegression)
+            {
+                Console.WriteLine($"  ⚠ {latestBoot.RegressionExplanation}");
+            }
+            Console.ResetColor();
+        }
+
+        // 3. Black Box Incident Recorder (Phase 14)
+        var incidentRecorder = new IncidentRecorder(store, driverInspector);
+        incidentRecorder.IncidentLogged += (s, inc) =>
+        {
+            Console.ForegroundColor = ConsoleColor.Magenta;
+            Console.WriteLine($"\n>>> [BLACK BOX RECORDED] Incident #{inc.IncidentNumber:D5} | Trigger: {inc.TriggerReason} | Pre-Samples: {inc.PreEventWindow.Count}");
+            Console.ResetColor();
+        };
+
+        // 4. USB Sentinel Node & Core Bus
         var sentinelNode = new UsbSerialSentinelNode();
         await sentinelNode.ConnectAsync(comPort);
         Console.WriteLine($"[INIT] Sentinel Node interface: {sentinelNode.PortName} (Active: {sentinelNode.IsConnected})");
@@ -51,7 +89,6 @@ internal static class Program
         var learner = new StatisticalBaselineLearner();
         var correlationEngine = new MultiSignalCorrelationEngine(classifier);
 
-        // Seed a sample baseline for comparison
         var seededBaseline = new WorkloadBaseline
         {
             ProfileName = "Historical Gaming Baseline",
@@ -70,6 +107,7 @@ internal static class Program
 
         using var collector = new SensorCollector(provider, TimeSpan.FromSeconds(1));
         int sampleCounter = 0;
+        bool incidentTriggered = false;
         using var cts = new CancellationTokenSource();
 
         Console.CancelKeyPress += (s, e) =>
@@ -83,27 +121,41 @@ internal static class Program
         {
             sampleCounter++;
 
-            // 1. Classify Workload
+            // 1. Ingest into Incident Ring Buffer
+            incidentRecorder.IngestTelemetry(sample);
+
+            // 2. Classify Workload
             var workload = classifier.Classify(sample);
 
-            // 2. Ingest into Statistical Baseline Learner
+            // 3. Ingest into Baseline Learner
             learner.IngestSample(sample, workload.Workload);
             var activeBaseline = learner.GetBaseline(workload.Workload) ?? (workload.Workload == WorkloadType.Gaming ? seededBaseline : null);
 
-            // 3. Multi-Signal Diagnostic Correlation
+            // 4. Multi-Signal Diagnostic Correlation
             var analysis = correlationEngine.Analyze(sample, activeBaseline);
 
-            // 4. Persist sample and scores
+            // 5. Black Box Trigger on Critical Events or Test Flag
+            if ((analysis.DetectedEvents.Any(e => e.Severity == EventSeverity.Critical) || triggerTestIncident) && !incidentTriggered)
+            {
+                incidentTriggered = true;
+                await incidentRecorder.RecordIncidentAsync(
+                    analysis.DetectedEvents.FirstOrDefault()?.Title ?? "Manual Diagnostic Incident",
+                    EventSeverity.Critical,
+                    analysis.Score.OverallScore,
+                    analysis.DetectedEvents);
+            }
+
+            // 6. Persistence
             await store.StoreTelemetrySampleAsync(sample);
             await store.StoreHealthScoreAsync(analysis.Score);
 
-            // 5. Broadcast alerts
+            // 7. Forward Alerts
             foreach (var evt in analysis.DetectedEvents)
             {
                 await alertManager.PublishAlertAsync(evt);
             }
 
-            // 6. Transmit Telemetry Packet to ESP32-S3 Sentinel Node
+            // 8. Transmit to ESP32-S3 Sentinel Node
             var packet = new SentinelPacket
             {
                 Type = "status",
@@ -118,8 +170,8 @@ internal static class Program
             };
             await sentinelNode.SendTelemetryAsync(packet);
 
-            // 7. Render Console Dashboard
-            RenderTelemetry(sample, workload, activeBaseline, analysis, sampleCounter);
+            // 9. Render Console Dashboard
+            RenderTelemetry(sample, workload, activeBaseline, analysis, driverSummary, latestBoot, sampleCounter);
         };
 
         collector.CollectionError += (s, ex) =>
@@ -143,8 +195,8 @@ internal static class Program
         await store.DisposeAsync();
 
         Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine($"\n[COMPLETE] Milestone 2 verification finished. Processed {sampleCounter} telemetry frames.");
-        Console.WriteLine($"[STORAGE] Verified: All frames and events persisted cleanly to SQLite: {dbPath}");
+        Console.WriteLine($"\n[COMPLETE] Milestone 3 verification finished. Processed {sampleCounter} telemetry frames.");
+        Console.WriteLine($"[STORAGE] Verified: All frames, boot sessions, and incidents persisted cleanly to SQLite: {dbPath}");
         Console.ResetColor();
     }
 
@@ -153,6 +205,8 @@ internal static class Program
         WorkloadClassification workload,
         WorkloadBaseline? baseline,
         AnalysisResult analysis,
+        DriverHealthSummary drivers,
+        BootSession? boot,
         int count)
     {
         Console.Clear();
@@ -160,11 +214,20 @@ internal static class Program
         Console.WriteLine($"=== PC SENTINEL LIVE TELEMETRY [Frame #{count}] | {sample.Timestamp:HH:mm:ss} UTC ===");
         Console.ResetColor();
 
-        // Workload Indicator
+        // Workload & Boot Status
         Console.ForegroundColor = ConsoleColor.Magenta;
-        Console.Write($"[ACTIVE WORKLOAD: {workload.Workload.ToString().ToUpper()}] ");
+        Console.Write($"[WORKLOAD: {workload.Workload.ToString().ToUpper()}] ");
         Console.ResetColor();
-        Console.WriteLine($"{workload.Description} (Confidence: {workload.Confidence * 100:F0}%)");
+        Console.Write($"{workload.Description}  ");
+
+        if (boot != null)
+        {
+            Console.Write("| Boot: ");
+            Console.ForegroundColor = boot.IsRegression ? ConsoleColor.Red : ConsoleColor.Green;
+            Console.Write($"{boot.TotalBootDurationMs / 1000.0:F1}s");
+            Console.ResetColor();
+        }
+        Console.WriteLine();
 
         // CPU
         Console.Write("CPU:     ");
@@ -183,19 +246,22 @@ internal static class Program
         PrintMetric("Fan", sample.GpuFanPercent, "%", null, null);
         Console.WriteLine();
 
-        // RAM & Storage
+        // RAM
         Console.Write("RAM:     ");
         PrintMetric("Used", sample.RamUsedGb, " GB", null, null);
         PrintMetric("Load", sample.RamLoadPercent, "%", 85, 94);
         Console.WriteLine();
 
+        // Driver Health Status
+        Console.ForegroundColor = drivers.HasCriticalFailure ? ConsoleColor.Red : ConsoleColor.DarkGray;
+        Console.WriteLine($"Drivers: {drivers.HealthyCount} healthy | {drivers.ErrorCount} errors | {drivers.DegradedCount} degraded");
+        Console.ResetColor();
+
         // Learned Baseline Comparison
         if (baseline != null)
         {
-            Console.WriteLine("--------------------------------------------------------------------------------");
             Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.WriteLine($"Baseline Profile: {baseline.ProfileName} (N={baseline.SampleCount})");
-            Console.WriteLine($"  Expected Normal: GPU Temp: {baseline.AvgGpuTempC:F1}±{baseline.StdDevGpuTempC:F1}°C | GPU Clock: {baseline.AvgGpuClockMhz:F0} MHz | Power: {baseline.AvgGpuPowerW:F0} W");
+            Console.WriteLine($"Baseline: {baseline.ProfileName} (Normal GPU: {baseline.AvgGpuTempC:F1}±{baseline.StdDevGpuTempC:F1}°C @ {baseline.AvgGpuClockMhz:F0}MHz)");
             Console.ResetColor();
         }
 

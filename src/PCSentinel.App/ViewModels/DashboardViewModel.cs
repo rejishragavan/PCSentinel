@@ -57,8 +57,17 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
     [ObservableProperty] private PointCollection _cpuSparkline = new();
     [ObservableProperty] private PointCollection _gpuSparkline = new();
 
+    [ObservableProperty] private string _bootDurationText = "Boot: 15.4s (Normal)";
+    [ObservableProperty] private string _driverHealthSummaryText = "Drivers: 48 OK (0 Errors)";
+    [ObservableProperty] private string _incidentCountText = "Black Box: 0 Incidents";
+
     public ObservableCollection<HealthEvent> ActiveEvents { get; } = new();
     public ObservableCollection<ScoreDeduction> Deductions { get; } = new();
+    public ObservableCollection<IncidentReport> RecentIncidents { get; } = new();
+
+    private readonly PnpDeviceInspector _driverInspector;
+    private readonly BootAnalyzer _bootAnalyzer;
+    private readonly IncidentRecorder _incidentRecorder;
 
     public DashboardViewModel()
     {
@@ -67,12 +76,37 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
         _baselineLearner = new StatisticalBaselineLearner();
         _correlationEngine = new MultiSignalCorrelationEngine(_classifier);
         _sentinelNode = new UsbSerialSentinelNode();
+
+        _driverInspector = new PnpDeviceInspector();
+        _bootAnalyzer = new BootAnalyzer(_store);
+        _incidentRecorder = new IncidentRecorder(_store, _driverInspector);
     }
 
     public async Task InitializeAsync()
     {
         await _store.InitializeDatabaseAsync();
         await _sentinelNode.ConnectAsync("VIRTUAL");
+
+        // 1. Initial Driver Scan
+        try
+        {
+            var driverSummary = await _driverInspector.ScanDriversAsync();
+            DriverHealthSummaryText = $"Drivers: {driverSummary.HealthyCount} OK, {driverSummary.ErrorCount} Err";
+        }
+        catch { }
+
+        // 2. Initial Boot Analysis
+        try
+        {
+            var latestBoot = await _bootAnalyzer.AnalyzeLatestBootAsync();
+            if (latestBoot != null)
+            {
+                BootDurationText = latestBoot.IsRegression
+                    ? $"Boot: {latestBoot.TotalBootDurationMs / 1000.0:F1}s (⚠ +{latestBoot.RegressionDeltaMs / 1000.0:F1}s Slow)"
+                    : $"Boot: {latestBoot.TotalBootDurationMs / 1000.0:F1}s (Normal)";
+            }
+        }
+        catch { }
 
         _activeBaseline = new WorkloadBaseline
         {
@@ -132,8 +166,24 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
+    [RelayCommand]
+    public async Task TriggerBlackBoxIncident()
+    {
+        var inc = await _incidentRecorder.RecordIncidentAsync(
+            "Manual Black Box Diagnostic Capture",
+            EventSeverity.Warning,
+            HealthScore,
+            ActiveEvents.ToList());
+
+        RecentIncidents.Insert(0, inc);
+        IncidentCountText = $"Black Box: {RecentIncidents.Count} Captured";
+    }
+
     private void OnSampleCollected(object? sender, TelemetrySample sample)
     {
+        // 0. Continuous Black Box Ingestion (last 30s buffer)
+        _incidentRecorder.IngestTelemetry(sample);
+
         // 1. Workload Classification
         var classification = _classifier.Classify(sample);
 

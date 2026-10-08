@@ -22,6 +22,7 @@
     <ProjectReference Include="..\..\src\PCSentinel.Hardware\PCSentinel.Hardware.csproj" />
     <ProjectReference Include="..\..\src\PCSentinel.Storage\PCSentinel.Storage.csproj" />
     <ProjectReference Include="..\..\src\PCSentinel.Analysis\PCSentinel.Analysis.csproj" />
+    <ProjectReference Include="..\..\src\PCSentinel.Diagnostics\PCSentinel.Diagnostics.csproj" />
   </ItemGroup>
 
 </Project>

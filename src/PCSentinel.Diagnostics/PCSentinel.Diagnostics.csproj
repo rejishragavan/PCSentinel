@@ -9,6 +9,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\PCSentinel.Core\PCSentinel.Core.csproj" />
+    <ProjectReference Include="..\PCSentinel.Storage\PCSentinel.Storage.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Management" Version="8.0.0" />
   </ItemGroup>
 
 </Project>

@@ -13,6 +13,12 @@ public interface ITelemetryStore : IAsyncDisposable
     Task StoreHealthScoreAsync(HealthScore score, CancellationToken cancellationToken = default);
     Task StoreBaselineAsync(WorkloadBaseline baseline, CancellationToken cancellationToken = default);
 
+    Task StoreBootSessionAsync(BootSession session, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<BootSession>> GetBootSessionsAsync(int count, CancellationToken cancellationToken = default);
+
+    Task StoreIncidentAsync(IncidentReport incident, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<IncidentReport>> GetIncidentsAsync(int count, CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<TelemetrySample>> GetRecentSamplesAsync(int count, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<HealthEvent>> GetRecentEventsAsync(int count, CancellationToken cancellationToken = default);
     Task<HealthScore?> GetLatestHealthScoreAsync(CancellationToken cancellationToken = default);

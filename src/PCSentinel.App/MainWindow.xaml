@@ -154,14 +154,27 @@
                         <TextBlock Text="RAM Saturation" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
                         <TextBlock Text="{Binding RamLoad, StringFormat='{}{0:F1} %'}" Foreground="{StaticResource TextPrimary}" FontWeight="SemiBold" FontSize="13" HorizontalAlignment="Right"/>
                     </Grid>
-                    <Grid Margin="0,0,0,12">
+                    <Grid Margin="0,0,0,6">
+                        <TextBlock Text="OS Boot Timing" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
+                        <TextBlock Text="{Binding BootDurationText}" Foreground="{StaticResource TextPrimary}" FontWeight="SemiBold" FontSize="12" HorizontalAlignment="Right"/>
+                    </Grid>
+                    <Grid Margin="0,0,0,6">
+                        <TextBlock Text="PnP Drivers" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
+                        <TextBlock Text="{Binding DriverHealthSummaryText}" Foreground="{StaticResource AccentCyan}" FontWeight="SemiBold" FontSize="12" HorizontalAlignment="Right"/>
+                    </Grid>
+                    <Grid Margin="0,0,0,10">
                         <TextBlock Text="Hardware Bus" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
-                        <TextBlock Text="USB-C Serial Active" Foreground="{StaticResource AccentGreen}" FontWeight="Bold" FontSize="12" HorizontalAlignment="Right"/>
+                        <TextBlock Text="USB Serial Active" Foreground="{StaticResource AccentGreen}" FontWeight="Bold" FontSize="12" HorizontalAlignment="Right"/>
                     </Grid>
 
-                    <Button Content="Cycle Workload (Idle / Gaming / Throttle)" 
-                            Command="{Binding CycleSimulationProfileCommand}" 
-                            Background="#334155" Foreground="{StaticResource TextPrimary}" BorderThickness="0" Padding="10,6" Margin="0,4,0,0" Cursor="Hand"/>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <Button Content="Cycle Workload" 
+                                Command="{Binding CycleSimulationProfileCommand}" 
+                                Background="#334155" Foreground="{StaticResource TextPrimary}" BorderThickness="0" Padding="8,5" Margin="0,0,8,0" Cursor="Hand"/>
+                        <Button Content="Capture Black Box" 
+                                Command="{Binding TriggerBlackBoxIncidentCommand}" 
+                                Background="#991B1B" Foreground="White" BorderThickness="0" Padding="8,5" Cursor="Hand"/>
+                    </StackPanel>
                 </StackPanel>
             </Border>
         </Grid>

@@ -105,6 +105,37 @@ public sealed class SqliteTelemetryStore : ITelemetryStore
                 AvgGpuPower REAL NOT NULL,
                 UpdatedAt TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS BootSessions (
+                Id TEXT PRIMARY KEY,
+                BootId INTEGER NOT NULL,
+                Timestamp TEXT NOT NULL,
+                TotalBootDurationMs REAL NOT NULL,
+                MainPathBootDurationMs REAL NOT NULL,
+                DriverInitDurationMs REAL NOT NULL,
+                PostBootDurationMs REAL NOT NULL,
+                SmssInitDurationMs REAL NOT NULL,
+                IsRegression INTEGER NOT NULL,
+                RegressionExplanation TEXT,
+                SlowestSubsystem TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_BootSessions_Timestamp ON BootSessions (Timestamp DESC);
+
+            CREATE TABLE IF NOT EXISTS Incidents (
+                Id TEXT PRIMARY KEY,
+                IncidentNumber INTEGER NOT NULL,
+                Timestamp TEXT NOT NULL,
+                TriggerReason TEXT NOT NULL,
+                Severity TEXT NOT NULL,
+                HealthScore INTEGER NOT NULL,
+                PreEventJson TEXT NOT NULL,
+                PostEventJson TEXT NOT NULL,
+                CorrelatedEventsJson TEXT NOT NULL,
+                DegradedDriversJson TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_Incidents_Timestamp ON Incidents (Timestamp DESC);
         ";
 
         await using var cmd = conn.CreateCommand();
@@ -370,6 +401,141 @@ public sealed class SqliteTelemetryStore : ITelemetryStore
         }
 
         return null;
+    }
+
+    public async Task StoreBootSessionAsync(BootSession session, CancellationToken cancellationToken = default)
+    {
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(cancellationToken);
+
+        const string sql = @"
+            INSERT INTO BootSessions (
+                Id, BootId, Timestamp, TotalBootDurationMs, MainPathBootDurationMs,
+                DriverInitDurationMs, PostBootDurationMs, SmssInitDurationMs,
+                IsRegression, RegressionExplanation, SlowestSubsystem
+            ) VALUES (
+                @Id, @BootId, @Timestamp, @TotalBoot, @MainPath,
+                @DriverInit, @PostBoot, @SmssInit,
+                @IsRegression, @RegressionExplanation, @SlowestSubsystem
+            );
+        ";
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.Parameters.AddWithValue("@Id", session.Id.ToString());
+        cmd.Parameters.AddWithValue("@BootId", session.BootId);
+        cmd.Parameters.AddWithValue("@Timestamp", session.Timestamp.ToString("O"));
+        cmd.Parameters.AddWithValue("@TotalBoot", session.TotalBootDurationMs);
+        cmd.Parameters.AddWithValue("@MainPath", session.MainPathBootDurationMs);
+        cmd.Parameters.AddWithValue("@DriverInit", session.DriverInitDurationMs);
+        cmd.Parameters.AddWithValue("@PostBoot", session.PostBootDurationMs);
+        cmd.Parameters.AddWithValue("@SmssInit", session.SmssInitDurationMs);
+        cmd.Parameters.AddWithValue("@IsRegression", session.IsRegression ? 1 : 0);
+        cmd.Parameters.AddWithValue("@RegressionExplanation", (object?)session.RegressionExplanation ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@SlowestSubsystem", session.SlowestSubsystem);
+
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<BootSession>> GetBootSessionsAsync(int count, CancellationToken cancellationToken = default)
+    {
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(cancellationToken);
+
+        const string sql = "SELECT * FROM BootSessions ORDER BY Timestamp DESC LIMIT @Count;";
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.Parameters.AddWithValue("@Count", count);
+
+        var list = new List<BootSession>();
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            list.Add(new BootSession
+            {
+                Id = Guid.Parse(reader.GetString(0)),
+                BootId = reader.GetInt32(1),
+                Timestamp = DateTimeOffset.Parse(reader.GetString(2)),
+                TotalBootDurationMs = reader.GetDouble(3),
+                MainPathBootDurationMs = reader.GetDouble(4),
+                DriverInitDurationMs = reader.GetDouble(5),
+                PostBootDurationMs = reader.GetDouble(6),
+                SmssInitDurationMs = reader.GetDouble(7),
+                IsRegression = reader.GetInt32(8) == 1,
+                RegressionExplanation = reader.IsDBNull(9) ? null : reader.GetString(9),
+                SlowestSubsystem = reader.IsDBNull(10) ? "None" : reader.GetString(10)
+            });
+        }
+
+        return list;
+    }
+
+    public async Task StoreIncidentAsync(IncidentReport incident, CancellationToken cancellationToken = default)
+    {
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(cancellationToken);
+
+        const string sql = @"
+            INSERT INTO Incidents (
+                Id, IncidentNumber, Timestamp, TriggerReason, Severity, HealthScore,
+                PreEventJson, PostEventJson, CorrelatedEventsJson, DegradedDriversJson
+            ) VALUES (
+                @Id, @IncidentNumber, @Timestamp, @TriggerReason, @Severity, @HealthScore,
+                @PreEventJson, @PostEventJson, @CorrelatedEventsJson, @DegradedDriversJson
+            );
+        ";
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.Parameters.AddWithValue("@Id", incident.Id.ToString());
+        cmd.Parameters.AddWithValue("@IncidentNumber", incident.IncidentNumber);
+        cmd.Parameters.AddWithValue("@Timestamp", incident.Timestamp.ToString("O"));
+        cmd.Parameters.AddWithValue("@TriggerReason", incident.TriggerReason);
+        cmd.Parameters.AddWithValue("@Severity", incident.Severity.ToString());
+        cmd.Parameters.AddWithValue("@HealthScore", incident.HealthScoreAtTrigger);
+        cmd.Parameters.AddWithValue("@PreEventJson", System.Text.Json.JsonSerializer.Serialize(incident.PreEventWindow));
+        cmd.Parameters.AddWithValue("@PostEventJson", System.Text.Json.JsonSerializer.Serialize(incident.PostEventWindow));
+        cmd.Parameters.AddWithValue("@CorrelatedEventsJson", System.Text.Json.JsonSerializer.Serialize(incident.CorrelatedEvents));
+        cmd.Parameters.AddWithValue("@DegradedDriversJson", System.Text.Json.JsonSerializer.Serialize(incident.DegradedDrivers));
+
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<IncidentReport>> GetIncidentsAsync(int count, CancellationToken cancellationToken = default)
+    {
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync(cancellationToken);
+
+        const string sql = "SELECT * FROM Incidents ORDER BY Timestamp DESC LIMIT @Count;";
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.Parameters.AddWithValue("@Count", count);
+
+        var list = new List<IncidentReport>();
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var preJson = reader.GetString(6);
+            var postJson = reader.GetString(7);
+            var eventsJson = reader.GetString(8);
+            var driversJson = reader.GetString(9);
+
+            list.Add(new IncidentReport
+            {
+                Id = Guid.Parse(reader.GetString(0)),
+                IncidentNumber = reader.GetInt64(1),
+                Timestamp = DateTimeOffset.Parse(reader.GetString(2)),
+                TriggerReason = reader.GetString(3),
+                Severity = Enum.Parse<EventSeverity>(reader.GetString(4)),
+                HealthScoreAtTrigger = reader.GetInt32(5),
+                PreEventWindow = System.Text.Json.JsonSerializer.Deserialize<List<TelemetrySample>>(preJson) ?? new(),
+                PostEventWindow = System.Text.Json.JsonSerializer.Deserialize<List<TelemetrySample>>(postJson) ?? new(),
+                CorrelatedEvents = System.Text.Json.JsonSerializer.Deserialize<List<HealthEvent>>(eventsJson) ?? new(),
+                DegradedDrivers = System.Text.Json.JsonSerializer.Deserialize<List<DriverInfo>>(driversJson) ?? new()
+            });
+        }
+
+        return list;
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
