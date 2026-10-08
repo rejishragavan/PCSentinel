@@ -41,7 +41,7 @@
 
                         <!-- Hardware Provider Status -->
                         <Border Background="#334155" CornerRadius="6" Padding="8,3" Margin="10,0,0,0" VerticalAlignment="Center">
-                            <TextBlock Text="{Binding IsSimulating, Converter={x:Null}, StringFormat='Mode: {0}'}" 
+                            <TextBlock Text="{Binding ProviderModeText}" 
                                        Foreground="{StaticResource TextSecondary}" FontSize="11" FontWeight="SemiBold"/>
                         </Border>
                     </StackPanel>

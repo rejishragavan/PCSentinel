@@ -47,6 +47,7 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
     [ObservableProperty] private string _healthSummary = "System Operating Normally";
     [ObservableProperty] private string _healthColor = "#10B981"; // Emerald green
     [ObservableProperty] private bool _isSimulating;
+    [ObservableProperty] private string _providerModeText = "LIVE (Ring-0)";
 
     [ObservableProperty] private string _workloadName = "Gaming";
     [ObservableProperty] private string _workloadDescription = "High 3D Graphics Load";
@@ -92,17 +93,20 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
             {
                 _provider = new LibreHardwareSensorProvider();
                 IsSimulating = false;
+                ProviderModeText = "LIVE (Ring-0)";
             }
             catch
             {
                 _provider = new SimulatedSensorProvider(_currentSimProfile);
                 IsSimulating = true;
+                ProviderModeText = $"SIMULATED ({_currentSimProfile})";
             }
         }
         else
         {
             _provider = new SimulatedSensorProvider(_currentSimProfile);
             IsSimulating = true;
+            ProviderModeText = $"SIMULATED ({_currentSimProfile})";
         }
 
         _collector = new SensorCollector(_provider, TimeSpan.FromSeconds(1));
@@ -124,6 +128,7 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
             };
 
             sim.SetProfile(_currentSimProfile);
+            ProviderModeText = $"SIMULATED ({_currentSimProfile})";
         }
     }
 
