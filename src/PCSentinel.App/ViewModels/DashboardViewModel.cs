@@ -120,6 +120,51 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
         }
         catch { }
 
+        // 3. Initial Storage Scan
+        try
+        {
+            var drives = await _storageAnalyzer.InspectStorageDrivesAsync();
+            StorageDrives.Clear();
+            foreach (var d in drives)
+            {
+                StorageDrives.Add(d);
+            }
+            if (drives.Count > 0)
+            {
+                var primary = drives[0];
+                StorageSummaryText = $"{primary.Model}: {primary.HealthPercentage}% Health, {primary.TemperatureC:F0}°C ({primary.DegradationRisk.Split('(')[0].Trim()})";
+            }
+        }
+        catch { }
+
+        // 4. Initial Load of Previous Incidents and Experiments from SQLite
+        try
+        {
+            var incidents = await _store.GetRecentIncidentsAsync(10);
+            RecentIncidents.Clear();
+            foreach (var inc in incidents)
+            {
+                RecentIncidents.Add(inc);
+            }
+            if (RecentIncidents.Count > 0)
+            {
+                IncidentCountText = $"Black Box: {RecentIncidents.Count} Incidents";
+            }
+
+            var experiments = await _store.GetOcExperimentsAsync(10);
+            Experiments.Clear();
+            foreach (var exp in experiments)
+            {
+                Experiments.Add(exp);
+            }
+            if (Experiments.Count > 0)
+            {
+                var latest = Experiments[0];
+                LatestOcExperimentText = $"Exp #{latest.ExperimentNumber}: +{latest.GpuClockOffsetMhz:F0}MHz -> +{latest.PerformanceGainPercent:F1}% FPS";
+            }
+        }
+        catch { }
+
         _activeBaseline = new WorkloadBaseline
         {
             ProfileName = "Learned Gaming Profile",

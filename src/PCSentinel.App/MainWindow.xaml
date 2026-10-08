@@ -343,6 +343,58 @@
                     </Grid>
                 </TabItem>
 
+                <!-- TAB 4: Storage SMART Health -->
+                <TabItem Header="STORAGE &amp; SMART HEALTH" Foreground="{StaticResource TextPrimary}" FontWeight="Bold">
+                    <Grid Margin="0,14,0,0">
+                        <ListView ItemsSource="{Binding StorageDrives}" Background="Transparent" BorderThickness="0">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="#0F172A" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,8">
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+
+                                            <!-- Header -->
+                                            <Grid Grid.Row="0" Margin="0,0,0,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+
+                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Model}" Foreground="{StaticResource AccentCyan}" FontWeight="Bold" FontSize="14"/>
+                                                    <Border Background="#1E293B" CornerRadius="4" Padding="6,2" Margin="10,0,0,0">
+                                                        <TextBlock Text="{Binding InterfaceType}" Foreground="{StaticResource TextSecondary}" FontSize="11"/>
+                                                    </Border>
+                                                </StackPanel>
+
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <TextBlock Text="Health: " Foreground="{StaticResource TextSecondary}" FontSize="12"/>
+                                                    <TextBlock Text="{Binding HealthPercentage, StringFormat='{}{0}%'}" Foreground="{StaticResource AccentGreen}" FontWeight="Bold" FontSize="13"/>
+                                                    <TextBlock Text=" • Temp: " Foreground="{StaticResource TextSecondary}" FontSize="12" Margin="8,0,0,0"/>
+                                                    <TextBlock Text="{Binding TemperatureC, StringFormat='{}{0:F0}°C'}" Foreground="{StaticResource TextPrimary}" FontWeight="SemiBold" FontSize="12"/>
+                                                </StackPanel>
+                                            </Grid>
+
+                                            <!-- SMART Details -->
+                                            <StackPanel Grid.Row="1">
+                                                <TextBlock Text="{Binding DegradationRisk, StringFormat='Condition: {0}'}" Foreground="{StaticResource TextPrimary}" FontSize="12" Margin="0,0,0,4"/>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding TotalBytesWrittenTb, StringFormat='Total Writes: {0:F1} TB'}" Foreground="{StaticResource TextSecondary}" FontSize="11" Margin="0,0,16,0"/>
+                                                    <TextBlock Text="{Binding PowerOnHours, StringFormat='Power-On Hours: {0} hrs'}" Foreground="{StaticResource TextSecondary}" FontSize="11" Margin="0,0,16,0"/>
+                                                    <TextBlock Text="{Binding ReallocatedSectors, StringFormat='Reallocated Sectors: {0}'}" Foreground="{StaticResource TextSecondary}" FontSize="11"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </Grid>
+                </TabItem>
+
             </TabControl>
         </Border>
     </Grid>
