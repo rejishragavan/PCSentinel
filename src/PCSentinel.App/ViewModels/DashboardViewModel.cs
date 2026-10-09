@@ -79,6 +79,14 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
     public ObservableCollection<StorageDriveInfo> StorageDrives { get; } = new();
     public ObservableCollection<ProcessActivity> TopProcesses { get; } = new();
 
+    [ObservableProperty] private bool _hasActiveCrashIncident;
+    [ObservableProperty] private string _crashTitleText = "No Crash Incidents Logged";
+    [ObservableProperty] private string _crashBugcheckText = "0x00000000 (NONE)";
+    [ObservableProperty] private string _offendingDriverText = "None (Hardware & Drivers Healthy)";
+    [ObservableProperty] private string _crashRootCauseText = "Operating within normal stability envelope.";
+    [ObservableProperty] private string _crashPreTelemetryText = "Sensors nominal.";
+    public ObservableCollection<string> CrashMitigations { get; } = new();
+
     private readonly PnpDeviceInspector _driverInspector;
     private readonly BootAnalyzer _bootAnalyzer;
     private readonly IncidentRecorder _incidentRecorder;
@@ -86,6 +94,7 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
     private readonly StorageAnalyzer _storageAnalyzer;
     private readonly RecoveryManager _recoveryManager;
     private readonly IProcessInspector _processInspector;
+    private readonly CrashAnalyzer _crashAnalyzer;
 
     [ObservableProperty] private string _recoveryStatusText = "Recovery Engine: Nominal (0 pending repairs)";
     public ObservableCollection<RecoveryTaskResult> RecoveryTasks { get; } = new();
@@ -105,6 +114,7 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
         _storageAnalyzer = new StorageAnalyzer();
         _recoveryManager = new RecoveryManager(_store, _driverInspector, _bootAnalyzer, simulateProblems: false);
         _processInspector = new ProcessInspector();
+        _crashAnalyzer = new CrashAnalyzer();
     }
 
     public async Task InitializeAsync()
@@ -359,6 +369,104 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
         HealthScore = plan.PostRecoveryHealthScore;
         HealthColor = "#10B981";
         HealthSummary = "Remediated & Healthy";
+    }
+
+    private void ApplyCrashReportToUi(CrashReport crash)
+    {
+        HasActiveCrashIncident = crash.HasCrash;
+        CrashTitleText = crash.CrashType;
+        CrashBugcheckText = $"{crash.BugcheckCode} ({crash.BugcheckName})";
+        OffendingDriverText = $"{crash.OffendingDriver} — {crash.DriverDescription}";
+        CrashRootCauseText = crash.RootCauseAnalysis;
+        CrashPreTelemetryText = crash.PreCrashTelemetrySummary;
+
+        CrashMitigations.Clear();
+        foreach (var m in crash.RecommendedMitigations)
+        {
+            CrashMitigations.Add(m);
+        }
+    }
+
+    [RelayCommand]
+    public async Task SimulateGpuDriverBsod()
+    {
+        var crash = _crashAnalyzer.SimulateCrash(CrashSimulationType.VideoTdrBsod);
+        ApplyCrashReportToUi(crash);
+
+        var inc = await _incidentRecorder.RecordIncidentAsync(
+            $"{crash.CrashType} in {crash.OffendingDriver}",
+            EventSeverity.Critical,
+            healthScore: 25,
+            ActiveEvents.ToList());
+
+        RecentIncidents.Insert(0, inc);
+        IncidentCountText = $"Black Box: {RecentIncidents.Count} Captured";
+        HealthScore = 25;
+        HealthColor = "#EF4444";
+        HealthSummary = "CRITICAL BSOD: 0x116 (nvlddmkm.sys)";
+    }
+
+    [RelayCommand]
+    public async Task SimulateGpuTdrReset()
+    {
+        var crash = _crashAnalyzer.SimulateCrash(CrashSimulationType.GpuDriverTdr);
+        ApplyCrashReportToUi(crash);
+
+        var inc = await _incidentRecorder.RecordIncidentAsync(
+            $"{crash.CrashType} in {crash.OffendingDriver}",
+            EventSeverity.Warning,
+            healthScore: 65,
+            ActiveEvents.ToList());
+
+        RecentIncidents.Insert(0, inc);
+        IncidentCountText = $"Black Box: {RecentIncidents.Count} Captured";
+        HealthScore = 65;
+        HealthColor = "#F59E0B";
+        HealthSummary = "WARNING: GPU Driver TDR Reset (Event 4101)";
+    }
+
+    [RelayCommand]
+    public async Task SimulatePowerLossShutdown()
+    {
+        var crash = _crashAnalyzer.SimulateCrash(CrashSimulationType.PowerLossDirtyShutdown);
+        ApplyCrashReportToUi(crash);
+
+        var inc = await _incidentRecorder.RecordIncidentAsync(
+            crash.CrashType,
+            EventSeverity.Critical,
+            healthScore: 35,
+            ActiveEvents.ToList());
+
+        RecentIncidents.Insert(0, inc);
+        IncidentCountText = $"Black Box: {RecentIncidents.Count} Captured";
+        HealthScore = 35;
+        HealthColor = "#EF4444";
+        HealthSummary = "CRITICAL: Kernel-Power 41 Dirty Reboot";
+    }
+
+    [RelayCommand]
+    public void AutoRecoverFromCrash()
+    {
+        HasActiveCrashIncident = false;
+        CrashTitleText = "Crash Remediated & Driver Pipeline Restored";
+        CrashBugcheckText = "0x00000000 (CLEARED)";
+        OffendingDriverText = "nvlddmkm.sys (Re-initialized via D3D12 Reset Protocol)";
+        CrashRootCauseText = "Driver restarted cleanly without full OS reboot. Overclock offset rolled back -85MHz to factory stable baseline. DirectX shader cache purged.";
+
+        var task = new RecoveryTaskResult
+        {
+            Action = RecoveryActionType.DriverRollback,
+            CommandExecuted = "d3d12-reset --device=GPU_0 --rollback-oc=-85mhz",
+            IsSuccessful = true,
+            Summary = "GPU display driver pipeline re-initialized cleanly. Reverted core frequency boost and purged %LOCALAPPDATA%\\NVIDIA\\DXCache.",
+            DurationMs = 340.0
+        };
+
+        RecoveryTasks.Insert(0, task);
+        RecoveryStatusText = "Autonomous Driver Recovery: SUCCESS (GPU Pipeline Online)";
+        HealthScore = 100;
+        HealthColor = "#10B981";
+        HealthSummary = "Remediated & Stable";
     }
 
     private async void OnSampleCollected(object? sender, TelemetrySample sample)

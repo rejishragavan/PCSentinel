@@ -26,6 +26,10 @@ internal static class Program
         bool runOcDemo = args.Contains("--oc-lab") || args.Contains("--auto-oc");
         bool runRecoveryDemo = args.Contains("--recovery") || args.Contains("--auto-repair");
         bool detectCulprits = args.Contains("--detect-culprits") || simulateThrottle;
+        bool simulateBsod = args.Contains("--simulate-bsod") || args.Contains("--bsod");
+        bool simulateTdr = args.Contains("--simulate-tdr") || args.Contains("--tdr");
+        bool simulatePowerCut = args.Contains("--simulate-powercut") || args.Contains("--power-loss");
+        bool runCrashDemo = simulateBsod || simulateTdr || simulatePowerCut;
         string? espOcTarget = args.FirstOrDefault(a => a.StartsWith("--esp-oc="))?.Split('=')[1] ??
                               (args.Contains("--esp-oc") ? "gpu" : null);
         string comPort = args.FirstOrDefault(a => a.StartsWith("--com="))?.Split('=')[1] ?? "VIRTUAL";
@@ -177,6 +181,68 @@ internal static class Program
             Console.WriteLine($"    Restored Health Score: {plan.PostRecoveryHealthScore}/100");
             Console.WriteLine("    Status: Persisted all repair execution audits to SQLite RecoveryAudits table.");
             Console.ResetColor();
+            Console.WriteLine("================================================================================\n");
+        }
+
+        // 6b. Crash Flight Recorder & Minidump Subsystem
+        var crashAnalyzer = new CrashAnalyzer();
+        if (runCrashDemo)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine("\n================================================================================");
+            Console.WriteLine("          CRASH FLIGHT RECORDER & MINIDUMP ANALYZER — DIAGNOSTIC RUNNER         ");
+            Console.WriteLine("================================================================================");
+            Console.ResetColor();
+
+            var simType = simulateTdr ? CrashSimulationType.GpuDriverTdr :
+                          simulatePowerCut ? CrashSimulationType.PowerLossDirtyShutdown :
+                          CrashSimulationType.VideoTdrBsod;
+
+            var crash = crashAnalyzer.SimulateCrash(simType);
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine($"[1] CRASH DETECTED: {crash.CrashType}");
+            Console.ResetColor();
+            Console.WriteLine($"    Bugcheck Code:    {crash.BugcheckCode} ({crash.BugcheckName})");
+            Console.WriteLine($"    Offending Driver: {crash.OffendingDriver} — {crash.DriverDescription}");
+            Console.WriteLine($"    Crash Dump:       {crash.MinidumpLocation}");
+            Console.WriteLine($"    Timestamp:        {crash.OccurredAt:yyyy-MM-dd HH:mm:ss} UTC");
+
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine($"\n[2] Correlated Pre-Crash Telemetry (T - 2.0s):");
+            Console.ResetColor();
+            Console.WriteLine($"    {crash.PreCrashTelemetrySummary}");
+
+            Console.ForegroundColor = ConsoleColor.Magenta;
+            Console.WriteLine($"\n[3] Watchdog & Telemetry Root-Cause Analysis:");
+            Console.ResetColor();
+            Console.WriteLine($"    {crash.RootCauseAnalysis}");
+
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"\n[4] Autonomous Remediation & Mitigation Plan:");
+            foreach (var m in crash.RecommendedMitigations)
+            {
+                Console.WriteLine($"    • {m}");
+            }
+            Console.ResetColor();
+
+            var recordedIncident = await incidentRecorder.RecordIncidentAsync(
+                $"{crash.CrashType} in {crash.OffendingDriver}",
+                EventSeverity.Critical,
+                healthScore: 25,
+                new List<HealthEvent>
+                {
+                    new HealthEvent
+                    {
+                        Type = HealthEventType.UnexpectedShutdown,
+                        Severity = EventSeverity.Critical,
+                        Title = crash.CrashType,
+                        Evidence = crash.RootCauseAnalysis,
+                        Recommendation = crash.RecommendedMitigations.FirstOrDefault() ?? "Revert overclock settings",
+                        Confidence = 0.99
+                    }
+                });
+
+            Console.WriteLine($"\n[5] Black Box Flight Recorder: Logged incident #{recordedIncident.IncidentNumber:D5} to SQLite with 30 pre-crash telemetry frames.");
             Console.WriteLine("================================================================================\n");
         }
 

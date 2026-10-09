@@ -23,6 +23,13 @@ public record IncidentReport
     public IReadOnlyList<DriverInfo> DegradedDrivers { get; init; } = Array.Empty<DriverInfo>();
     public IReadOnlyList<string> SystemLogs { get; init; } = Array.Empty<string>();
 
+    // Crash Analysis & Minidump Diagnostics (BSOD & Sudden Shutdowns)
+    public string? BugcheckCode { get; init; }
+    public string? OffendingDriver { get; init; }
+    public string? CrashDumpPath { get; init; }
+    public string? RootCauseAnalysis { get; init; }
+    public string? RemediationPlan { get; init; }
+
     public string Summary =>
         $"Incident #{IncidentNumber:D5} [{Severity}] at {Timestamp:HH:mm:ss}: {TriggerReason} (Pre-samples: {PreEventWindow.Count})";
 }
