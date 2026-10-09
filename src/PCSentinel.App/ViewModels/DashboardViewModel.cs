@@ -242,23 +242,47 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
     [RelayCommand]
     public void SetScenarioNormalGaming()
     {
+        _currentSimProfile = SimulationProfile.GamingHeavy;
         if (_provider is SimulatedSensorProvider sim)
         {
-            _currentSimProfile = SimulationProfile.GamingHeavy;
             sim.SetProfile(_currentSimProfile);
-            ProviderModeText = $"SIMULATED ({_currentSimProfile})";
         }
+        else
+        {
+            _provider = new SimulatedSensorProvider(_currentSimProfile);
+            if (_collector != null)
+            {
+                _collector.Dispose();
+                _collector = new SensorCollector(_provider, TimeSpan.FromSeconds(1));
+                _collector.SampleCollected += OnSampleCollected;
+                _ = _collector.StartAsync();
+            }
+        }
+        IsSimulating = true;
+        ProviderModeText = $"SIMULATED ({_currentSimProfile})";
     }
 
     [RelayCommand]
     public void SetScenarioThermalThrottle()
     {
+        _currentSimProfile = SimulationProfile.ThermalThrottlingIncident;
         if (_provider is SimulatedSensorProvider sim)
         {
-            _currentSimProfile = SimulationProfile.ThermalThrottlingIncident;
             sim.SetProfile(_currentSimProfile);
-            ProviderModeText = $"SIMULATED ({_currentSimProfile})";
         }
+        else
+        {
+            _provider = new SimulatedSensorProvider(_currentSimProfile);
+            if (_collector != null)
+            {
+                _collector.Dispose();
+                _collector = new SensorCollector(_provider, TimeSpan.FromSeconds(1));
+                _collector.SampleCollected += OnSampleCollected;
+                _ = _collector.StartAsync();
+            }
+        }
+        IsSimulating = true;
+        ProviderModeText = $"SIMULATED ({_currentSimProfile})";
     }
 
     [RelayCommand]
