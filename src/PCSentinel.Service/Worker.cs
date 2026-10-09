@@ -47,7 +47,7 @@ public sealed class Worker : BackgroundService
         _correlationEngine = new MultiSignalCorrelationEngine(_classifier);
 
         _sentinelNode = new UsbSerialSentinelNode();
-        await _sentinelNode.ConnectAsync("VIRTUAL", cancellationToken);
+        await _sentinelNode.ConnectAsync("VIRTUAL", 115200, cancellationToken);
 
         _alertManager = new AlertManager(_store, _sentinelNode);
 
@@ -171,7 +171,7 @@ public sealed class Worker : BackgroundService
 
         if (_sentinelNode != null)
         {
-            await _sentinelNode.DisconnectAsync(cancellationToken);
+            await _sentinelNode.DisconnectAsync();
         }
 
         if (_store != null)

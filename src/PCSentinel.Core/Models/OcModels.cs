@@ -63,3 +63,32 @@ public record OcExperiment
     public double MaxTempReachedC { get; init; }
     public string Notes { get; init; } = string.Empty;
 }
+
+/// <summary>
+/// Subsystems eligible for automated overclocking and tuning triggered locally or via ESP32.
+/// </summary>
+public enum OcTarget
+{
+    Gpu = 1,
+    Cpu = 2,
+    Ram = 3,
+    All = 4
+}
+
+/// <summary>
+/// Result of an automated multi-component overclocking execution.
+/// </summary>
+public record AutoOcExecutionResult
+{
+    public OcTarget Target { get; init; }
+    public string TargetLabel { get; init; } = string.Empty;
+    public string AppliedSettings { get; init; } = string.Empty;
+    public double BaselineMetric { get; init; }
+    public double TunedMetric { get; init; }
+    public double GainPercent { get; init; }
+    public double PeakTemperatureC { get; init; }
+    public bool StabilityPassed { get; init; }
+    public string StatusMessage { get; init; } = string.Empty;
+    public DateTimeOffset AppliedAt { get; init; } = DateTimeOffset.UtcNow;
+}
+

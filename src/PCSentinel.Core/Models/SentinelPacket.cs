@@ -37,4 +37,47 @@ public record SentinelPacket
 
     [JsonPropertyName("beep")]
     public bool TriggerBuzzer { get; init; }
+
+    [JsonPropertyName("culprit")]
+    public string? CulpritProcess { get; init; }
+
+    [JsonPropertyName("culprit_cpu")]
+    public double CulpritCpuPercent { get; init; }
+
+    [JsonPropertyName("oc_mode")]
+    public string? ActiveOcMode { get; init; }
 }
+
+/// <summary>
+/// Upstream command sent from ESP32-S3 hardware node to the PC Sentinel host over USB Serial.
+/// </summary>
+public record SentinelCommandPacket
+{
+    [JsonPropertyName("cmd")]
+    public string Command { get; init; } = string.Empty; // "overclock", "benchmark", "clear_alert"
+
+    [JsonPropertyName("target")]
+    public string Target { get; init; } = "gpu"; // "gpu", "cpu", "ram", "all"
+}
+
+/// <summary>
+/// Downstream acknowledgement packet sent back to ESP32 node confirming applied tuning.
+/// </summary>
+public record SentinelOcAckPacket
+{
+    [JsonPropertyName("type")]
+    public string Type { get; init; } = "oc_ack";
+
+    [JsonPropertyName("target")]
+    public string Target { get; init; } = "GPU";
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = "STABLE";
+
+    [JsonPropertyName("gain")]
+    public double GainPercent { get; init; }
+
+    [JsonPropertyName("msg")]
+    public string Message { get; init; } = string.Empty;
+}
+

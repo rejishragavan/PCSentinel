@@ -18,6 +18,7 @@ public sealed class UsbSerialSentinelNode : ISentinelNode
     public string PortName { get; private set; } = "None";
 
     public event EventHandler<string>? PacketTransmitted;
+    public event EventHandler<SentinelCommandPacket>? CommandReceived;
 
     public Task ConnectAsync(string portName, int baudRate = 115200, CancellationToken cancellationToken = default)
     {
@@ -36,6 +37,23 @@ public sealed class UsbSerialSentinelNode : ISentinelNode
                 ReadTimeout = 1000,
                 WriteTimeout = 1000,
                 NewLine = "\n"
+            };
+            _serialPort.DataReceived += (s, e) =>
+            {
+                try
+                {
+                    while (_serialPort != null && _serialPort.IsOpen && _serialPort.BytesToRead > 0)
+                    {
+                        var line = _serialPort.ReadLine()?.Trim();
+                        if (string.IsNullOrEmpty(line)) continue;
+                        var cmd = JsonSerializer.Deserialize<SentinelCommandPacket>(line);
+                        if (cmd != null && !string.IsNullOrEmpty(cmd.Command))
+                        {
+                            CommandReceived?.Invoke(this, cmd);
+                        }
+                    }
+                }
+                catch { }
             };
             _serialPort.Open();
             _isVirtual = false;
@@ -75,6 +93,29 @@ public sealed class UsbSerialSentinelNode : ISentinelNode
         }
 
         PacketTransmitted?.Invoke(this, json);
+    }
+
+    public async Task SendOcAckAsync(SentinelOcAckPacket ack, CancellationToken cancellationToken = default)
+    {
+        if (!IsConnected) return;
+
+        var json = JsonSerializer.Serialize(ack);
+
+        if (_serialPort != null && _serialPort.IsOpen)
+        {
+            await Task.Run(() => _serialPort.WriteLine(json), cancellationToken);
+        }
+
+        PacketTransmitted?.Invoke(this, json);
+    }
+
+    public void SimulateIncomingCommand(string command, string target = "gpu")
+    {
+        CommandReceived?.Invoke(this, new SentinelCommandPacket
+        {
+            Command = command,
+            Target = target
+        });
     }
 
     public async ValueTask DisposeAsync()

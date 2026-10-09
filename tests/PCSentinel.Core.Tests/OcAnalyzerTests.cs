@@ -87,4 +87,22 @@ public class OcAnalyzerTests : IAsyncLifetime
         Assert.NotEmpty(history);
         Assert.Equal("Safe Boost Profile (+80MHz)", history.First().SettingLabel);
     }
+
+    [Theory]
+    [InlineData(OcTarget.Gpu, 4.8)]
+    [InlineData(OcTarget.Cpu, 3.2)]
+    [InlineData(OcTarget.Ram, 12.5)]
+    [InlineData(OcTarget.All, 7.5)]
+    public async Task ExecuteAutoTune_ValidTargets_AppliesCorrectOffsets(OcTarget target, double expectedGain)
+    {
+        var analyzer = new OcAnalyzer(_store);
+
+        var result = await analyzer.ExecuteAutoTuneAsync(target);
+
+        Assert.Equal(target, result.Target);
+        Assert.True(result.StabilityPassed);
+        Assert.Equal(expectedGain, result.GainPercent);
+        Assert.False(string.IsNullOrEmpty(result.AppliedSettings));
+        Assert.False(string.IsNullOrEmpty(result.StatusMessage));
+    }
 }

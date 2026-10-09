@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 using PCSentinel.Analysis;
 using PCSentinel.Core.Interfaces;
 using PCSentinel.Core.Models;
+using PCSentinel.Diagnostics;
 using PCSentinel.Hardware;
 using PCSentinel.Storage;
 
@@ -67,11 +68,16 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
     [ObservableProperty] private string _latestOcExperimentText = "Last Experiment: Not run yet";
     [ObservableProperty] private string _storageSummaryText = "Samsung 990 PRO 2TB: 99% Health, 41°C (Nominal)";
 
+    [ObservableProperty] private string _primaryCulpritText = "Process Monitor: Background nominal (0 spikes detected)";
+    [ObservableProperty] private string _esp32OcStatusText = "ESP32 Node: Listening for Hardware OC Commands...";
+    [ObservableProperty] private string _activeOcModeText = "Stock Configuration (XMP Baseline)";
+
     public ObservableCollection<HealthEvent> ActiveEvents { get; } = new();
     public ObservableCollection<ScoreDeduction> Deductions { get; } = new();
     public ObservableCollection<IncidentReport> RecentIncidents { get; } = new();
     public ObservableCollection<OcExperiment> Experiments { get; } = new();
     public ObservableCollection<StorageDriveInfo> StorageDrives { get; } = new();
+    public ObservableCollection<ProcessActivity> TopProcesses { get; } = new();
 
     private readonly PnpDeviceInspector _driverInspector;
     private readonly BootAnalyzer _bootAnalyzer;
@@ -79,6 +85,7 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
     private readonly OcAnalyzer _ocAnalyzer;
     private readonly StorageAnalyzer _storageAnalyzer;
     private readonly RecoveryManager _recoveryManager;
+    private readonly IProcessInspector _processInspector;
 
     [ObservableProperty] private string _recoveryStatusText = "Recovery Engine: Nominal (0 pending repairs)";
     public ObservableCollection<RecoveryTaskResult> RecoveryTasks { get; } = new();
@@ -97,12 +104,25 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
         _ocAnalyzer = new OcAnalyzer(_store);
         _storageAnalyzer = new StorageAnalyzer();
         _recoveryManager = new RecoveryManager(_store, _driverInspector, _bootAnalyzer, simulateProblems: false);
+        _processInspector = new ProcessInspector();
     }
 
     public async Task InitializeAsync()
     {
         await _store.InitializeDatabaseAsync();
         await _sentinelNode.ConnectAsync("VIRTUAL");
+        _sentinelNode.CommandReceived += OnSentinelCommandReceived;
+
+        try
+        {
+            var initialCulprits = await _processInspector.DetectCulpritProcessesAsync(false);
+            TopProcesses.Clear();
+            foreach (var p in initialCulprits.TopProcesses.Take(6))
+            {
+                TopProcesses.Add(p);
+            }
+        }
+        catch { }
 
         // 1. Initial Driver Scan
         try
@@ -145,7 +165,7 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
         // 4. Initial Load of Previous Incidents and Experiments from SQLite
         try
         {
-            var incidents = await _store.GetRecentIncidentsAsync(10);
+            var incidents = await _store.GetIncidentsAsync(10);
             RecentIncidents.Clear();
             foreach (var inc in incidents)
             {
@@ -341,7 +361,7 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
         HealthSummary = "Remediated & Healthy";
     }
 
-    private void OnSampleCollected(object? sender, TelemetrySample sample)
+    private async void OnSampleCollected(object? sender, TelemetrySample sample)
     {
         // 0. Continuous Black Box Ingestion (last 30s buffer)
         _incidentRecorder.IngestTelemetry(sample);
@@ -361,7 +381,19 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
         _ = _store.StoreTelemetrySampleAsync(sample);
         _ = _store.StoreHealthScoreAsync(analysis.Score);
 
-        // 5. Sentinel Node Packet Transmission
+        // 5. Background Process Culprit Inspection
+        bool isThrottling = analysis.DetectedEvents.Any(e => e.Type == HealthEventType.ThermalThrottling);
+        CulpritProcessSummary culpritSummary;
+        try
+        {
+            culpritSummary = await _processInspector.DetectCulpritProcessesAsync(isThrottling);
+        }
+        catch
+        {
+            culpritSummary = new CulpritProcessSummary();
+        }
+
+        // 6. Sentinel Node Packet Transmission
         _ = _sentinelNode.SendTelemetryAsync(new SentinelPacket
         {
             Type = "status",
@@ -372,11 +404,14 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
             GpuLoad = sample.GpuLoadPercent ?? 0,
             Workload = classification.Workload.ToString(),
             LedColor = analysis.Score.OverallScore >= 90 ? "GREEN" : analysis.Score.OverallScore >= 75 ? "YELLOW" : "RED",
-            TriggerBuzzer = analysis.DetectedEvents.Any(e => e.Severity == EventSeverity.Critical)
+            TriggerBuzzer = analysis.DetectedEvents.Any(e => e.Severity == EventSeverity.Critical),
+            CulpritProcess = culpritSummary.PrimaryCulprit != null ? $"{culpritSummary.PrimaryCulprit.ProcessName} ({culpritSummary.PrimaryCulprit.CpuPercent:F1}%)" : "None (Idle)",
+            CulpritCpuPercent = culpritSummary.PrimaryCulprit?.CpuPercent ?? 0.0,
+            ActiveOcMode = ActiveOcModeText
         });
 
-        // 6. UI Update
-        Application.Current?.Dispatcher.Invoke(() =>
+        // 7. UI Update
+        void UpdateUi()
         {
             CpuTemp = sample.CpuTemperatureC ?? 0;
             CpuClock = sample.CpuClockMhz ?? 0;
@@ -422,8 +457,78 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
             var headroom = _ocAnalyzer.EstimateHeadroom(sample, baseline);
             OcHeadroomSummary = $"Headroom: +{headroom.RecommendedClockDeltaMhz:F0} MHz ({headroom.ThermalHeadroom} Margin)";
             OcRationale = headroom.Rationale;
-        });
+
+            PrimaryCulpritText = culpritSummary.HasCulprit
+                ? $"⚠ Suspect: {culpritSummary.TechnicalDiagnosis}"
+                : "Background Processes: Nominal (0 spikes detected)";
+
+            TopProcesses.Clear();
+            foreach (var p in culpritSummary.TopProcesses.Take(6))
+            {
+                TopProcesses.Add(p);
+            }
+        }
+
+        if (Application.Current?.Dispatcher != null)
+        {
+            Application.Current.Dispatcher.Invoke(UpdateUi);
+        }
+        else
+        {
+            UpdateUi();
+        }
     }
+
+    private async void OnSentinelCommandReceived(object? sender, SentinelCommandPacket cmd)
+    {
+        if (cmd.Command.Equals("overclock", StringComparison.OrdinalIgnoreCase))
+        {
+            var target = cmd.Target.ToLowerInvariant() switch
+            {
+                "cpu" => OcTarget.Cpu,
+                "ram" => OcTarget.Ram,
+                "all" => OcTarget.All,
+                _ => OcTarget.Gpu
+            };
+
+            var res = await _ocAnalyzer.ExecuteAutoTuneAsync(target);
+
+            void UpdateUi()
+            {
+                Esp32OcStatusText = $"[ESP32 TRIGGERED] {res.Target} OC Applied: {res.AppliedSettings} (Gain: +{res.GainPercent:F1}%)";
+                ActiveOcModeText = $"{res.Target} OC Active (+{res.GainPercent:F1}%)";
+            }
+
+            if (Application.Current?.Dispatcher != null)
+            {
+                Application.Current.Dispatcher.Invoke(UpdateUi);
+            }
+            else
+            {
+                UpdateUi();
+            }
+
+            await _sentinelNode.SendOcAckAsync(new SentinelOcAckPacket
+            {
+                Target = res.Target.ToString().ToUpperInvariant(),
+                Status = res.StabilityPassed ? "STABLE" : "INSTABILITY_REVERTED",
+                GainPercent = res.GainPercent,
+                Message = res.AppliedSettings
+            });
+        }
+    }
+
+    [RelayCommand]
+    public void SimulateEsp32GpuOc() => _sentinelNode.SimulateIncomingCommand("overclock", "gpu");
+
+    [RelayCommand]
+    public void SimulateEsp32CpuOc() => _sentinelNode.SimulateIncomingCommand("overclock", "cpu");
+
+    [RelayCommand]
+    public void SimulateEsp32RamOc() => _sentinelNode.SimulateIncomingCommand("overclock", "ram");
+
+    [RelayCommand]
+    public void SimulateEsp32AllOc() => _sentinelNode.SimulateIncomingCommand("overclock", "all");
 
     private void UpdateSparklines(double cpu, double gpu)
     {
@@ -463,6 +568,7 @@ public partial class DashboardViewModel : ObservableObject, IAsyncDisposable
             await _collector.StopAsync();
             _collector.Dispose();
         }
+        _sentinelNode.CommandReceived -= OnSentinelCommandReceived;
         await _sentinelNode.DisconnectAsync();
         await _store.DisposeAsync();
     }

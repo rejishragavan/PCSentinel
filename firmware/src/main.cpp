@@ -6,8 +6,9 @@
 #include <ArduinoJson.h>
 
 // ==============================================================================
-//                         PC SENTINEL — FIRMWARE v1.0                          //
+//                         PC SENTINEL — FIRMWARE v2.0                          //
 //               ESP32-S3 Hardware Health & Diagnostics Node                     //
+//    Features: Process Culprit Attribution + Bidirectional Auto-Overclocking   //
 // ==============================================================================
 
 #define SCREEN_WIDTH 128
@@ -15,13 +16,13 @@
 #define OLED_RESET    -1
 #define OLED_ADDR     0x3C
 
-// Hardware Pin Configuration (Customizable for target DevKit board)
+// Hardware Pin Configuration (ESP32-S3 DevKitC-1)
 #define PIN_OLED_SDA  21
 #define PIN_OLED_SCL  22
-#define PIN_NEOPIXEL  48  // Built-in RGB LED on ESP32-S3 DevKitC-1 (or external WS2812B)
+#define PIN_NEOPIXEL  48  // Built-in WS2812 RGB LED
 #define NUM_PIXELS    1
 #define PIN_BUZZER    14  // Piezo Buzzer pin (Active high)
-#define PIN_BUTTON    0   // Boot button to cycle display pages
+#define PIN_BUTTON    0   // Boot button (GPIO 0, active LOW with internal pull-up)
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 Adafruit_NeoPixel pixel(NUM_PIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
@@ -39,23 +40,53 @@ struct SentinelState {
     char alertTitle[48] = "";
     char alertSeverity[16] = "Info";
     bool hasActiveAlert = false;
+    char culprit[32] = "None (Idle)";
+    float culpritCpu = 0.0f;
+    char ocMode[32] = "Stock Baseline";
     unsigned long lastPacketTime = 0;
 };
 
+// Hardware Overclocking State
+struct LastOcAck {
+    bool received = false;
+    char target[16] = "GPU";
+    char status[24] = "STABLE";
+    float gain = 0.0f;
+    char message[48] = "";
+    unsigned long timestamp = 0;
+};
+
 SentinelState g_state;
-int g_currentScreen = 0; // 0 = HUD Overview, 1 = Thermals & Clocks, 2 = Diagnostics
-const int TOTAL_SCREENS = 3;
-bool g_lastButtonState = HIGH;
-unsigned long g_lastDebounceTime = 0;
+LastOcAck g_lastOcAck;
+
+// Screen indexing:
+// 0 = HUD Overview
+// 1 = Thermals & Frequencies
+// 2 = Culprit Task Attribution (Clock Spikes & Throttling)
+// 3 = Overclocking Lab Menu (Select & Trigger CPU, GPU, RAM)
+int g_currentScreen = 0;
+const int TOTAL_SCREENS = 4;
+
+int g_selectedOcTarget = 0; // 0 = GPU, 1 = CPU, 2 = RAM, 3 = ALL
+const char* const OC_TARGET_NAMES[] = { "gpu", "cpu", "ram", "all" };
+const char* const OC_TARGET_LABELS[] = { "GPU Core (+85M)", "CPU All-Core (+150M)", "RAM DDR5 (XMP 3.0)", "ALL Components" };
+
+// Button Interaction State Machine (Short click vs Long press hold)
+unsigned long g_buttonPressStartTime = 0;
+bool g_buttonIsPressed = false;
+bool g_longPressHandled = false;
+const unsigned long LONG_PRESS_THRESHOLD_MS = 900; // Hold 0.9s to trigger Overclock
 
 void setupHardware();
 void parseSerialTelemetry();
+void triggerHardwareOverclock(const char* target);
 void updateDisplay();
 void updateLed();
 void handleBuzzer();
 void drawScreenHUD();
 void drawScreenThermals();
-void drawScreenAlerts();
+void drawScreenCulprits();
+void drawScreenOcMenu();
 void drawScreenDisconnected();
 
 void setup() {
@@ -67,20 +98,42 @@ void setup() {
 }
 
 void loop() {
-    // 1. Read Serial Packets
+    // 1. Read Serial Packets (Telemetry or OC Acknowledgement)
     parseSerialTelemetry();
 
-    // 2. Handle Display Cycle Button
+    // 2. Handle Button (Short Press: navigate/cycle, Long Press: trigger Overclock)
     int reading = digitalRead(PIN_BUTTON);
-    if (reading != g_lastButtonState) {
-        g_lastDebounceTime = millis();
+    if (reading == LOW && !g_buttonIsPressed) {
+        g_buttonIsPressed = true;
+        g_buttonPressStartTime = millis();
+        g_longPressHandled = false;
     }
-    if ((millis() - g_lastDebounceTime) > 50) {
-        if (reading == LOW && g_lastButtonState == HIGH) {
-            g_currentScreen = (g_currentScreen + 1) % TOTAL_SCREENS;
+    else if (reading == LOW && g_buttonIsPressed) {
+        // Button held down
+        if (!g_longPressHandled && (millis() - g_buttonPressStartTime >= LONG_PRESS_THRESHOLD_MS)) {
+            g_longPressHandled = true;
+            if (g_currentScreen == 3) {
+                // Trigger Hardware Overclock on selected target!
+                triggerHardwareOverclock(OC_TARGET_NAMES[g_selectedOcTarget]);
+            }
         }
     }
-    g_lastButtonState = reading;
+    else if (reading == HIGH && g_buttonIsPressed) {
+        // Button released
+        unsigned long pressDuration = millis() - g_buttonPressStartTime;
+        g_buttonIsPressed = false;
+
+        if (!g_longPressHandled && pressDuration > 40) {
+            // Short press
+            if (g_currentScreen == 3) {
+                // In OC Menu: advance target cursor
+                g_selectedOcTarget = (g_selectedOcTarget + 1) % 4;
+            } else {
+                // In other screens: cycle screens
+                g_currentScreen = (g_currentScreen + 1) % TOTAL_SCREENS;
+            }
+        }
+    }
 
     // 3. Update Visuals & Acoustics
     updateDisplay();
@@ -133,25 +186,73 @@ void parseSerialTelemetry() {
 
         if (strcmp(type, "status") == 0) {
             g_state.score = doc["score"] | 100;
-            g_state.cpuTemp = doc["cpuTemp"] | 0.0f;
-            g_state.gpuTemp = doc["gpuTemp"] | 0.0f;
-            g_state.cpuLoad = doc["cpuLoad"] | 0.0f;
-            g_state.gpuLoad = doc["gpuLoad"] | 0.0f;
+            g_state.cpuTemp = doc["cpu_t"] | doc["cpuTemp"] | 0.0f;
+            g_state.gpuTemp = doc["gpu_t"] | doc["gpuTemp"] | 0.0f;
+            g_state.cpuLoad = doc["cpu_l"] | doc["cpuLoad"] | 0.0f;
+            g_state.gpuLoad = doc["gpu_l"] | doc["gpuLoad"] | 0.0f;
             strncpy(g_state.workload, doc["workload"] | "ACTIVE", sizeof(g_state.workload) - 1);
-            strncpy(g_state.ledColor, doc["ledColor"] | "GREEN", sizeof(g_state.ledColor) - 1);
-            g_state.triggerBuzzer = doc["triggerBuzzer"] | false;
+            strncpy(g_state.ledColor, doc["led"] | doc["ledColor"] | "GREEN", sizeof(g_state.ledColor) - 1);
+            g_state.triggerBuzzer = doc["beep"] | doc["triggerBuzzer"] | false;
+
+            if (doc.containsKey("culprit")) {
+                strncpy(g_state.culprit, doc["culprit"] | "None (Idle)", sizeof(g_state.culprit) - 1);
+            }
+            g_state.culpritCpu = doc["culprit_cpu"] | 0.0f;
+            if (doc.containsKey("oc_mode")) {
+                strncpy(g_state.ocMode, doc["oc_mode"] | "Stock", sizeof(g_state.ocMode) - 1);
+            }
             g_state.hasActiveAlert = false;
-        } 
+        }
+        else if (strcmp(type, "oc_ack") == 0) {
+            g_lastOcAck.received = true;
+            strncpy(g_lastOcAck.target, doc["target"] | "GPU", sizeof(g_lastOcAck.target) - 1);
+            strncpy(g_lastOcAck.status, doc["status"] | "STABLE", sizeof(g_lastOcAck.status) - 1);
+            g_lastOcAck.gain = doc["gain"] | 0.0f;
+            strncpy(g_lastOcAck.message, doc["msg"] | "Boost Applied", sizeof(g_lastOcAck.message) - 1);
+            g_lastOcAck.timestamp = millis();
+
+            // Double beep on OC Acknowledgment
+            digitalWrite(PIN_BUZZER, HIGH);
+            delay(90);
+            digitalWrite(PIN_BUZZER, LOW);
+            delay(50);
+            digitalWrite(PIN_BUZZER, HIGH);
+            delay(110);
+            digitalWrite(PIN_BUZZER, LOW);
+        }
         else if (strcmp(type, "alert") == 0) {
             g_state.score = doc["score"] | 70;
-            strncpy(g_state.alertTitle, doc["title"] | "Hardware Anomaly", sizeof(g_state.alertTitle) - 1);
+            strncpy(g_state.alertTitle, doc["title"] | doc["alert_title"] | "Hardware Anomaly", sizeof(g_state.alertTitle) - 1);
             strncpy(g_state.alertSeverity, doc["severity"] | "Warning", sizeof(g_state.alertSeverity) - 1);
-            strncpy(g_state.ledColor, doc["ledColor"] | "RED", sizeof(g_state.ledColor) - 1);
-            g_state.triggerBuzzer = doc["triggerBuzzer"] | true;
+            strncpy(g_state.ledColor, "RED", sizeof(g_state.ledColor) - 1);
+            g_state.triggerBuzzer = true;
             g_state.hasActiveAlert = true;
-            g_currentScreen = 2; // Auto-jump to alert page
         }
     }
+}
+
+void triggerHardwareOverclock(const char* target) {
+    // Send command JSON packet to host over USB serial
+    JsonDocument cmdDoc;
+    cmdDoc["cmd"] = "overclock";
+    cmdDoc["target"] = target;
+    serializeJson(cmdDoc, Serial);
+    Serial.println();
+
+    // Immediate tactile feedback beep
+    digitalWrite(PIN_BUZZER, HIGH);
+    delay(70);
+    digitalWrite(PIN_BUZZER, LOW);
+
+    // NeoPixel purple pulse
+    pixel.setPixelColor(0, pixel.Color(190, 0, 255));
+    pixel.show();
+
+    g_lastOcAck.received = true;
+    strncpy(g_lastOcAck.target, target, sizeof(g_lastOcAck.target) - 1);
+    strncpy(g_lastOcAck.status, "TUNING HOST...", sizeof(g_lastOcAck.status) - 1);
+    g_lastOcAck.gain = 0.0f;
+    g_lastOcAck.timestamp = millis();
 }
 
 void updateDisplay() {
@@ -164,7 +265,8 @@ void updateDisplay() {
         switch (g_currentScreen) {
             case 0: drawScreenHUD(); break;
             case 1: drawScreenThermals(); break;
-            case 2: drawScreenAlerts(); break;
+            case 2: drawScreenCulprits(); break;
+            case 3: drawScreenOcMenu(); break;
             default: drawScreenHUD(); break;
         }
     }
@@ -173,7 +275,6 @@ void updateDisplay() {
 }
 
 void drawScreenHUD() {
-    // Title & Workload Bar
     display.setTextSize(1);
     display.setCursor(0, 0);
     display.print("SENTINEL | ");
@@ -234,28 +335,65 @@ void drawScreenThermals() {
     display.print(" %");
 }
 
-void drawScreenAlerts() {
+void drawScreenCulprits() {
     display.setTextSize(1);
     display.setCursor(0, 0);
-    display.println("DIAGNOSTICS / ALERT");
+    display.println("CULPRIT PROCESSES");
     display.drawLine(0, 9, 127, 9, SSD1306_WHITE);
 
-    if (g_state.hasActiveAlert) {
-        display.setCursor(0, 16);
-        display.print("[");
-        display.print(g_state.alertSeverity);
-        display.print("]");
-
-        display.setCursor(0, 30);
-        display.println(g_state.alertTitle);
-
-        display.setCursor(0, 52);
-        display.print("Action: Inspect GUI");
+    if (strstr(g_state.culprit, "None") != NULL) {
+        display.setCursor(0, 20);
+        display.println("System Nominal");
+        display.setCursor(0, 34);
+        display.println("No background tasks");
+        display.setCursor(0, 46);
+        display.println("causing clock drops.");
     } else {
-        display.setCursor(4, 24);
-        display.println("No Critical Alerts");
-        display.setCursor(4, 40);
-        display.println("All subsystems OK.");
+        display.setCursor(0, 16);
+        display.print("SUSPECT TASK:");
+        display.setCursor(0, 28);
+        display.println(g_state.culprit);
+
+        display.setCursor(0, 44);
+        display.print("CPU Usage: ");
+        display.print(g_state.culpritCpu, 1);
+        display.println("%");
+        display.setCursor(0, 54);
+        display.println("Attributed Throttle");
+    }
+}
+
+void drawScreenOcMenu() {
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.println("OC LAB MENU [HOLD]");
+    display.drawLine(0, 9, 127, 9, SSD1306_WHITE);
+
+    // If an ack was recently received, render confirmation banner
+    if (g_lastOcAck.received && (millis() - g_lastOcAck.timestamp < 3500)) {
+        display.setCursor(0, 15);
+        display.print(">> APPLIED: ");
+        display.println(g_lastOcAck.target);
+        display.setCursor(0, 28);
+        display.print("Gain: +");
+        display.print(g_lastOcAck.gain, 1);
+        display.println("% FPS");
+        display.setCursor(0, 42);
+        display.println(g_lastOcAck.status);
+        display.setCursor(0, 54);
+        display.println(g_lastOcAck.message);
+        return;
+    }
+
+    for (int i = 0; i < 4; i++) {
+        int y = 14 + (i * 12);
+        display.setCursor(0, y);
+        if (i == g_selectedOcTarget) {
+            display.print("> ");
+        } else {
+            display.print("  ");
+        }
+        display.print(OC_TARGET_LABELS[i]);
     }
 }
 
@@ -276,15 +414,19 @@ void updateLed() {
         // Pulsing Blue when disconnected
         int brightness = (sin(millis() / 300.0) + 1.0) * 40;
         pixel.setPixelColor(0, pixel.Color(0, 0, brightness));
-    } 
+    }
+    else if (g_lastOcAck.received && (millis() - g_lastOcAck.timestamp < 3500)) {
+        // Cyan / Purple celebratory pulse on Overclock execution
+        pixel.setPixelColor(0, pixel.Color(160, 32, 240));
+    }
     else if (strcmp(g_state.ledColor, "RED") == 0) {
         // Red flashing on throttle or crash
         bool flash = (millis() / 250) % 2;
         pixel.setPixelColor(0, flash ? pixel.Color(255, 0, 0) : pixel.Color(60, 0, 0));
-    } 
+    }
     else if (strcmp(g_state.ledColor, "YELLOW") == 0) {
         pixel.setPixelColor(0, pixel.Color(240, 160, 0)); // Amber warning
-    } 
+    }
     else {
         pixel.setPixelColor(0, pixel.Color(0, 220, 20));  // Emerald green nominal
     }

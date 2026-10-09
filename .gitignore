@@ -9,3 +9,5 @@ obj/
 *.db-shm
 *.db-wal
 TestResults/
+.local/
+Library/

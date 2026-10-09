@@ -25,6 +25,9 @@ internal static class Program
         bool triggerTestIncident = args.Contains("--trigger-incident");
         bool runOcDemo = args.Contains("--oc-lab") || args.Contains("--auto-oc");
         bool runRecoveryDemo = args.Contains("--recovery") || args.Contains("--auto-repair");
+        bool detectCulprits = args.Contains("--detect-culprits") || simulateThrottle;
+        string? espOcTarget = args.FirstOrDefault(a => a.StartsWith("--esp-oc="))?.Split('=')[1] ??
+                              (args.Contains("--esp-oc") ? "gpu" : null);
         string comPort = args.FirstOrDefault(a => a.StartsWith("--com="))?.Split('=')[1] ?? "VIRTUAL";
 
         ISensorProvider provider;
@@ -182,6 +185,78 @@ internal static class Program
         await sentinelNode.ConnectAsync(comPort);
         Console.WriteLine($"[INIT] Sentinel Node interface: {sentinelNode.PortName} (Active: {sentinelNode.IsConnected})");
 
+        var processInspector = new ProcessInspector();
+
+        if (detectCulprits)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("\n================================================================================");
+            Console.WriteLine("        PROCESS INSPECTOR — BACKGROUND TASK CULPRIT ATTRIBUTION RUNNER         ");
+            Console.WriteLine("================================================================================");
+            Console.ResetColor();
+
+            var culprits = await processInspector.DetectCulpritProcessesAsync(simulateThrottle);
+
+            Console.WriteLine($"[1] Scanned Live Host Processes: {culprits.TopProcesses.Count} active OS tasks analyzed");
+            Console.ForegroundColor = culprits.HasCulprit ? ConsoleColor.Red : ConsoleColor.Green;
+            Console.WriteLine($"[2] Attribution Status: {culprits.TechnicalDiagnosis}");
+            Console.ResetColor();
+
+            Console.WriteLine("\n[3] Top Resource-Consuming Background Processes:");
+            foreach (var p in culprits.TopProcesses.Take(6))
+            {
+                var flag = p.IsSuspect ? " ⚠ [CULPRIT SPIKE / THROTTLE DRIVER]" : "";
+                Console.ForegroundColor = p.IsSuspect ? ConsoleColor.Red : ConsoleColor.White;
+                Console.WriteLine($"    PID {p.ProcessId,5} | {p.ProcessName,-26} | CPU: {p.CpuPercent,5:F1}% | RAM: {p.WorkingSetMb,5:F0} MB{flag}");
+                Console.ResetColor();
+            }
+            Console.WriteLine("================================================================================\n");
+        }
+
+        if (espOcTarget != null)
+        {
+            var targetEnum = espOcTarget.ToLowerInvariant() switch
+            {
+                "cpu" => OcTarget.Cpu,
+                "ram" => OcTarget.Ram,
+                "all" => OcTarget.All,
+                _ => OcTarget.Gpu
+            };
+
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("\n================================================================================");
+            Console.WriteLine($"    ESP32 HARDWARE TRIGGER RECEIVED — AUTO-OVERCLOCKING TARGET: {targetEnum.ToString().ToUpperInvariant()}    ");
+            Console.WriteLine("================================================================================");
+            Console.ResetColor();
+
+            Console.WriteLine($"[1] ESP32 Serial Packet Received: {{\"cmd\":\"overclock\",\"target\":\"{espOcTarget}\"}}");
+            Console.WriteLine($"[2] Executing Autonomous Safety Headroom & Tuning Algorithm for {targetEnum}...");
+            var ocResult = await ocAnalyzer.ExecuteAutoTuneAsync(targetEnum);
+
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine($"    Applied Settings:    {ocResult.AppliedSettings}");
+            Console.WriteLine($"    Baseline Metric:     {ocResult.BaselineMetric:F1}");
+            Console.WriteLine($"    Tuned Metric:        {ocResult.TunedMetric:F1}");
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"    Verified Gain:       +{ocResult.GainPercent:F1}% Performance Boost");
+            Console.WriteLine($"    Stability Test:      {(ocResult.StabilityPassed ? "PASSED (Safe peak temp: " + ocResult.PeakTemperatureC + "°C)" : "FAILED (Reverted)")}");
+            Console.ResetColor();
+
+            Console.WriteLine($"[3] Dispatching Acknowledgment Packet to ESP32 OLED Display...");
+            var ackPacket = new SentinelOcAckPacket
+            {
+                Target = ocResult.Target.ToString().ToUpperInvariant(),
+                Status = ocResult.StabilityPassed ? "STABLE" : "INSTABILITY_REVERTED",
+                GainPercent = ocResult.GainPercent,
+                Message = ocResult.AppliedSettings
+            };
+            await sentinelNode.SendOcAckAsync(ackPacket);
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"    Sent to ESP32:       Type=oc_ack, Target={ackPacket.Target}, Status={ackPacket.Status}, Gain=+{ackPacket.GainPercent:F1}%");
+            Console.ResetColor();
+            Console.WriteLine("================================================================================\n");
+        }
+
         var alertManager = new AlertManager(store, sentinelNode);
         var classifier = new WorkloadClassifier();
         var learner = new StatisticalBaselineLearner();
@@ -235,7 +310,12 @@ internal static class Program
             // 5. Calculate OC Headroom
             var ocHeadroom = ocAnalyzer.EstimateHeadroom(sample, activeBaseline);
 
-            // 6. Black Box Trigger on Critical Events or Test Flag
+            // 6. Inspect Background Culprits
+            // 6. Inspect Background Culprits
+            bool isThrottling = analysis.DetectedEvents.Any(e => e.Type == HealthEventType.ThermalThrottling);
+            var culprits = await processInspector.DetectCulpritProcessesAsync(isThrottling);
+
+            // 7. Black Box Trigger on Critical Events or Test Flag
             if ((analysis.DetectedEvents.Any(e => e.Severity == EventSeverity.Critical) || triggerTestIncident) && !incidentTriggered)
             {
                 incidentTriggered = true;
@@ -246,17 +326,17 @@ internal static class Program
                     analysis.DetectedEvents);
             }
 
-            // 7. Persistence
+            // 8. Persistence
             await store.StoreTelemetrySampleAsync(sample);
             await store.StoreHealthScoreAsync(analysis.Score);
 
-            // 8. Forward Alerts
+            // 9. Forward Alerts
             foreach (var evt in analysis.DetectedEvents)
             {
                 await alertManager.PublishAlertAsync(evt);
             }
 
-            // 9. Transmit to ESP32-S3 Sentinel Node
+            // 10. Transmit to ESP32-S3 Sentinel Node
             var packet = new SentinelPacket
             {
                 Type = "status",
@@ -267,12 +347,15 @@ internal static class Program
                 GpuLoad = sample.GpuLoadPercent ?? 0,
                 Workload = workload.Workload.ToString(),
                 LedColor = analysis.Score.OverallScore >= 90 ? "GREEN" : analysis.Score.OverallScore >= 75 ? "YELLOW" : "RED",
-                TriggerBuzzer = analysis.DetectedEvents.Any(e => e.Severity == EventSeverity.Critical)
+                TriggerBuzzer = analysis.DetectedEvents.Any(e => e.Severity == EventSeverity.Critical),
+                CulpritProcess = culprits.PrimaryCulprit != null ? $"{culprits.PrimaryCulprit.ProcessName} ({culprits.PrimaryCulprit.CpuPercent:F1}%)" : "None (Idle)",
+                CulpritCpuPercent = culprits.PrimaryCulprit?.CpuPercent ?? 0.0,
+                ActiveOcMode = espOcTarget != null ? $"{espOcTarget.ToUpper()} OC Active" : "Stock (XMP Baseline)"
             };
             await sentinelNode.SendTelemetryAsync(packet);
 
-            // 10. Render Console Dashboard
-            RenderTelemetry(sample, workload, activeBaseline, analysis, driverSummary, latestBoot, ocHeadroom, drives.FirstOrDefault(), sampleCounter);
+            // 11. Render Console Dashboard
+            RenderTelemetry(sample, workload, activeBaseline, analysis, driverSummary, latestBoot, ocHeadroom, drives.FirstOrDefault(), culprits, sampleCounter);
         };
 
         collector.CollectionError += (s, ex) =>
@@ -310,6 +393,7 @@ internal static class Program
         BootSession? boot,
         OcHeadroomEstimate oc,
         StorageDriveInfo? drive,
+        CulpritProcessSummary? culprits,
         int count)
     {
         Console.Clear();
@@ -374,6 +458,20 @@ internal static class Program
         {
             Console.ForegroundColor = ConsoleColor.DarkGray;
             Console.WriteLine($"Baseline: {baseline.ProfileName} (Normal GPU: {baseline.AvgGpuTempC:F1}±{baseline.StdDevGpuTempC:F1}°C @ {baseline.AvgGpuClockMhz:F0}MHz)");
+            Console.ResetColor();
+        }
+
+        // Background Process Culprits
+        if (culprits != null && culprits.HasCulprit)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"Culprit: ⚠ {culprits.TechnicalDiagnosis}");
+            Console.ResetColor();
+        }
+        else
+        {
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine("Culprit: Background tasks nominal (0 clock spike / throttle culprits)");
             Console.ResetColor();
         }
 
